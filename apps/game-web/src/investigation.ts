@@ -4,6 +4,7 @@ import type {
   Evidence,
   EvidenceId,
   EventId,
+  KnowledgeNodeId,
   LocationId,
   Question,
   QuestionId,
@@ -15,6 +16,7 @@ export type IgnisInvestigationAction = "archivum_catalogue" | "typographia_lamp_
 const archivum = "aurea.archivum" as LocationId;
 const typographia = "aurea.typographia" as LocationId;
 const questionId = "question.ignis.first-flame" as QuestionId;
+const firstLineNodeId = "knowledge.ignis.first-line" as KnowledgeNodeId;
 
 export interface IgnisInvestigationView {
   readonly active: boolean;
@@ -37,6 +39,11 @@ function hasEvent(chronicle: ChronicleSaveV2, type: string): boolean {
   return chronicle.eventLedger.some((event) => event.type === type);
 }
 
+function typographiaIsOpen(chronicle: ChronicleSaveV2): boolean {
+  const minute = chronicle.world.timestamp.minuteOfDay;
+  return minute >= 9 * 60 && minute < 15 * 60;
+}
+
 export function projectIgnisInvestigation(chronicle: ChronicleSaveV2): IgnisInvestigationView {
   const persona = chronicle.personas[chronicle.activePersonaId as string];
   const knowledge = chronicle.knowledgeByPersona[chronicle.activePersonaId as string];
@@ -49,18 +56,22 @@ export function projectIgnisInvestigation(chronicle: ChronicleSaveV2): IgnisInve
   const availableActions: IgnisInvestigationAction[] = [];
 
   if (persona.currentLocation === archivum && !archivumDone) availableActions.push("archivum_catalogue");
-  if (persona.currentLocation === typographia && !typographiaDone) availableActions.push("typographia_lamp_record");
+  if (persona.currentLocation === typographia && typographiaIsOpen(chronicle) && !typographiaDone) {
+    availableActions.push("typographia_lamp_record");
+  }
 
   const text = complete
-    ? "As duas fontes convergem: a chama sustentada não depende apenas da centelha. Ela exige combustível adequado e alimentação contínua pelo pavio. A primeira QUAESTIO pode ser respondida."
+    ? "As duas fontes convergem: a chama sustentada não depende apenas da centelha. Ela exige combustível adequado e alimentação contínua pelo pavio. A primeira QUAESTIO está respondida."
     : persona.currentLocation === archivum
       ? archivumDone
         ? "O catálogo já forneceu uma peça da resposta. Ainda falta confrontar esse registro com uma fonte técnica da Typographia."
         : "Entre os catálogos de ofícios há referências a combustíveis de lamparina. Uma consulta pode testar se o óleo usado na Officina era escolha casual ou prática conhecida."
       : persona.currentLocation === typographia
-        ? typographiaDone
-          ? "O registro técnico da Typographia já está incorporado à investigação. O Archivum ainda pode oferecer contexto documental independente."
-          : "Os registros de manutenção dos lampiões da prensa descrevem pavios, reservatórios e falhas de chama. Eles podem revelar o mecanismo que manteve sua lamparina acesa."
+        ? !typographiaIsOpen(chronicle)
+          ? "A Typographia está fechada. O registro técnico dos lampiões da prensa só poderá ser consultado entre 09:00 e 15:00. Você pode esperar, seguir ao Archivum ou voltar depois."
+          : typographiaDone
+            ? "O registro técnico da Typographia já está incorporado à investigação. O Archivum ainda pode oferecer contexto documental independente."
+            : "Os registros de manutenção dos lampiões da prensa descrevem pavios, reservatórios e falhas de chama. Eles podem revelar o mecanismo que manteve sua lamparina acesa."
         : "A QUAESTIO sobre a primeira chama permanece aberta. O Archivum e a Typographia oferecem caminhos independentes para confrontá-la.";
 
   return { active: true, complete, availableActions, text };
@@ -116,7 +127,7 @@ export function applyIgnisInvestigationAction(
     const evidenceId = "evidence.ignis.archivum-catalogue" as EvidenceId;
     const claim: Claim = Object.freeze({
       id: claimId,
-      subjectId: "knowledge.ignis.first-line" as never,
+      subjectId: firstLineNodeId,
       predicate: "oleum_used_as_lamp_fuel",
       value: true,
       status: "supported",
@@ -134,12 +145,17 @@ export function applyIgnisInvestigationAction(
     return updateQuestion(chronicle, claim, evidence, "IgnisArchivumEvidenceFound");
   }
 
-  if (persona.currentLocation !== typographia || hasEvent(chronicle, "IgnisTypographiaEvidenceFound")) return chronicle;
+  if (
+    persona.currentLocation !== typographia ||
+    !typographiaIsOpen(chronicle) ||
+    hasEvent(chronicle, "IgnisTypographiaEvidenceFound")
+  ) return chronicle;
+
   const claimId = "claim.ignis.wick-feed" as ClaimId;
   const evidenceId = "evidence.ignis.typographia-lamp-record" as EvidenceId;
   const claim: Claim = Object.freeze({
     id: claimId,
-    subjectId: "knowledge.ignis.first-line" as never,
+    subjectId: firstLineNodeId,
     predicate: "saturated_wick_feeds_fuel_continuously",
     value: true,
     status: "supported",
