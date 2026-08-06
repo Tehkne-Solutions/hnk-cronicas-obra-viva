@@ -23,7 +23,7 @@ export const RECOVERED_FOLIO: ScriptumDocument = Object.freeze({
     Object.freeze({ id: "scribe-mark", kind: "provenance", textKey: "folio.provenance.scribe_mark", requires: { illumination: "lit", discernimentum: 2 } }),
   ]),
   provenance: Object.freeze([
-    Object.freeze({ id: "prov.folio.transfer-ledger", sourceRef: "evidence.folio.transfer-ledger", claimKey: "provenance.folio.transfer-cycle", confidence: "medium" }),
+    Object.freeze({ id: "prov.folio.transfer-ledger", sourceRef: "evidence.folio.archivum-ledger", claimKey: "provenance.folio.transfer-cycle", confidence: "medium" }),
     Object.freeze({ id: "prov.folio.scribe-mark", sourceRef: "evidence.folio.scribe-mark-reference", claimKey: "provenance.folio.ardel-circle", confidence: "low" }),
   ]),
 });
