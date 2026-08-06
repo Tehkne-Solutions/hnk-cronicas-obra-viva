@@ -12,7 +12,6 @@
   "dependencies": {
     "@hnk/domain": "workspace:*",
     "@hnk/consequentia-engine": "workspace:*",
-    "@hnk/save-contract": "workspace:*",
-    "@hnk/save-contract-v2": "workspace:*"
+    "@hnk/save-contract": "workspace:*"
   }
 }
