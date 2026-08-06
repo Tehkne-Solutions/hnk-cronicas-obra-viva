@@ -1,0 +1,26 @@
+:root { font-family: Georgia, 'Times New Roman', serif; color: #2d261d; background: #191510; }
+* { box-sizing: border-box; }
+body { margin: 0; min-width: 320px; min-height: 100vh; background: radial-gradient(circle at top, #34291d 0%, #17120e 70%); }
+button { font: inherit; }
+.shell { width: min(1180px, calc(100% - 32px)); margin: 0 auto; padding: 28px 0 18px; }
+header { display: flex; justify-content: space-between; align-items: end; gap: 24px; color: #eee2c7; margin-bottom: 18px; }
+.eyebrow { margin: 0; font-size: 12px; letter-spacing: .32em; opacity: .75; }
+h1 { margin: 4px 0 0; font-size: clamp(26px, 4vw, 44px); font-weight: 500; }
+.clock { padding: 10px 14px; border: 1px solid #78664b; border-radius: 4px; white-space: nowrap; }
+.book { display: grid; grid-template-columns: 1.35fr .65fr; min-height: 520px; background: #d9c7a2; border: 1px solid #7a6548; box-shadow: 0 20px 60px #0008; }
+.page { padding: clamp(28px, 5vw, 64px); background: linear-gradient(90deg, #e5d6b8, #d8c49d); }
+.narrative { border-right: 1px solid #a9936a; }
+.location { color: #73552e; letter-spacing: .15em; text-transform: uppercase; font-size: 12px; }
+.narrative > p:not(.location) { font-size: clamp(20px, 2.6vw, 29px); line-height: 1.55; max-width: 720px; }
+.actions, .routes { display: flex; flex-direction: column; gap: 10px; }
+.actions { align-items: flex-start; margin-top: 36px; }
+button { border: 1px solid #745b39; background: transparent; color: #392b1a; padding: 11px 15px; cursor: pointer; text-align: left; }
+button:hover, button:focus-visible { background: #c8ad7c55; outline: 2px solid #7e5d30; outline-offset: 2px; }
+.routes h2 { font-size: 18px; font-weight: 500; margin: 0 0 10px; }
+.note { margin-top: 18px; font-size: 13px; line-height: 1.5; opacity: .72; }
+.liber { margin-top: 16px; background: #211b14; color: #eadfca; border: 1px solid #695940; display: grid; grid-template-columns: repeat(4, 1fr); }
+.liber div { padding: 18px; border-right: 1px solid #594b37; display: flex; flex-direction: column; gap: 8px; }
+.liber div:last-child { border-right: 0; }
+.liber span { font-size: 13px; opacity: .72; line-height: 1.4; }
+footer { color: #9f927c; text-align: center; font-size: 12px; letter-spacing: .16em; margin-top: 18px; }
+@media (max-width: 760px) { header { align-items: flex-start; flex-direction: column; } .book { grid-template-columns: 1fr; } .narrative { border-right: 0; border-bottom: 1px solid #a9936a; } .liber { grid-template-columns: 1fr 1fr; } }
