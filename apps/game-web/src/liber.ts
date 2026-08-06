@@ -5,7 +5,7 @@ import {
   syncLiberKnowledge,
   type LiberState,
 } from "@hnk/liber-engine";
-import { createEmptyKnowledgeState } from "@hnk/domain";
+import { createEmptyKnowledgeState, type DomainEvent } from "@hnk/domain";
 import type { ChronicleSaveV2 } from "@hnk/save-contract/v2";
 
 const ignisSequence = [
@@ -23,7 +23,7 @@ export function projectChronicleLiber(chronicle: ChronicleSaveV2): LiberState {
 
   const sequenceEvents = ignisSequence
     .map((type) => chronicle.eventLedger.find((event) => event.type === type))
-    .filter((event): event is NonNullable<typeof event> => Boolean(event));
+    .filter((event): event is DomainEvent => Boolean(event));
   const manuscriptRead = sequenceEvents.find((event) => event.type === "IgnisManuscriptRead");
   const combustion = sequenceEvents.find((event) => event.type === "CombustionStarted");
   const question = knowledge.questions["question.ignis.first-flame"];
