@@ -76,3 +76,5 @@ export function visibleProvenanceClaims(
   const known = new Set(knownSourceRefs);
   return document.provenance.filter((claim) => !claim.sourceRef || known.has(claim.sourceRef));
 }
+
+export { recordProvenanceClaim, recordScriptumObservation, type ScriptumKnowledgeIds } from "./knowledge.js";
