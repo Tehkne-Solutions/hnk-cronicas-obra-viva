@@ -18,6 +18,7 @@
     "@hnk/liber-engine": "workspace:*",
     "@hnk/narrative-engine": "workspace:*",
     "@hnk/save-contract": "workspace:*",
+    "@hnk/scriptum-engine": "workspace:*",
     "@hnk/world-engine": "workspace:*",
     "react": "^19.1.1",
     "react-dom": "^19.1.1"
