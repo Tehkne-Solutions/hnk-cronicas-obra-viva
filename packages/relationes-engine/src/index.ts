@@ -1,5 +1,5 @@
 import type { EntityId } from "@hnk/domain";
-import type { TestimonyTopic, WitnessMind } from "@hnk/testimonia-engine";
+import type { TestimonyActorState } from "@hnk/testimonia-engine";
 
 export interface RelationState {
   readonly subjectId: EntityId;
@@ -13,7 +13,7 @@ export interface RelationState {
 }
 
 export interface DisclosureRule {
-  readonly topicId: string;
+  readonly propositionKey: string;
   readonly minimumTrust?: number;
   readonly minimumRespect?: number;
   readonly maximumSuspicion?: number;
@@ -31,20 +31,18 @@ function meets(rule: DisclosureRule, relation: RelationState): boolean {
 }
 
 export function applyDisclosureRules(
-  witness: WitnessMind,
+  actor: TestimonyActorState,
   relation: RelationState,
   rules: readonly DisclosureRule[],
-): WitnessMind {
+): TestimonyActorState {
   const unlocked = new Set(
-    rules.filter((rule) => meets(rule, relation)).map((rule) => rule.topicId),
+    rules.filter((rule) => meets(rule, relation)).map((rule) => rule.propositionKey),
   );
 
   return Object.freeze({
-    ...witness,
+    ...actor,
     willingToSay: Object.freeze(
-      Object.fromEntries(
-        Object.entries(witness.willingToSay).filter(([topicId]) => unlocked.has(topicId)),
-      ),
+      actor.willingToSay.filter((proposition) => unlocked.has(proposition.key)),
     ),
   });
 }
@@ -64,5 +62,3 @@ export function relationDelta(
     obligation: clamp(state.obligation + (delta.obligation ?? 0)),
   });
 }
-
-export type { TestimonyTopic };
