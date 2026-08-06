@@ -48,6 +48,8 @@ export interface OperationContext {
   readonly targetId?: EntityId;
   readonly instrumentId?: EntityId;
   readonly material?: MaterialInstance;
+  readonly targetMaterialId?: MaterialId;
+  readonly instrumentMaterialId?: MaterialId;
   readonly params?: Readonly<Record<string, unknown>>;
 }
 
@@ -60,6 +62,13 @@ export type AlchemyEvent =
 export interface OperationResolution {
   readonly events: readonly AlchemyEvent[];
   readonly observations: readonly string[];
+}
+
+function isSparkPair(a?: MaterialId, b?: MaterialId): boolean {
+  return (
+    (a === "silex" && b === "ferrum") ||
+    (a === "ferrum" && b === "silex")
+  );
 }
 
 export function resolveOperation(context: OperationContext): OperationResolution {
@@ -85,11 +94,11 @@ export function resolveOperation(context: OperationContext): OperationResolution
     }
     case "wait": {
       const minutes = context.params?.minutes;
-      if (!Number.isInteger(minutes) || Number(minutes) < 0) {
+      if (typeof minutes !== "number" || !Number.isInteger(minutes) || minutes < 0) {
         return { events: [], observations: ["operation.wait.invalid_duration"] };
       }
       return {
-        events: [{ type: "TimeAdvanced", minutes: Number(minutes) }],
+        events: [{ type: "TimeAdvanced", minutes }],
         observations: ["operation.wait.completed"],
       };
     }
@@ -97,9 +106,12 @@ export function resolveOperation(context: OperationContext): OperationResolution
       if (!context.targetId || !context.instrumentId) {
         return { events: [], observations: ["operation.strike.missing_pair"] };
       }
+      if (!isSparkPair(context.targetMaterialId, context.instrumentMaterialId)) {
+        return { events: [], observations: ["operation.strike.no_spark"] };
+      }
       return {
         events: [{ type: "SparkProduced", sourceA: context.targetId, sourceB: context.instrumentId }],
-        observations: ["operation.strike.spark_candidate"],
+        observations: ["operation.strike.spark"] },
       };
     }
   }
