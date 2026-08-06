@@ -1,0 +1,19 @@
+{
+  "name": "@hnk/micro-aurea-e2e",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@hnk/domain": "workspace:*",
+    "@hnk/aurea-routines": "workspace:*",
+    "@hnk/aurea-scene": "workspace:*",
+    "@hnk/aurea-navigation": "workspace:*",
+    "@hnk/aurea-time": "workspace:*",
+    "@hnk/save-contract": "workspace:*",
+    "@hnk/consequentia-engine": "workspace:*"
+  }
+}
