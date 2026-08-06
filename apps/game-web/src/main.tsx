@@ -15,6 +15,7 @@ import type { NpcRoutine } from "@hnk/aurea-routines";
 import { composeNarrative } from "@hnk/narrative-engine";
 import { createLiberState, syncLiberKnowledge } from "@hnk/liber-engine";
 import type { ChronicleSaveV2 } from "@hnk/save-contract/v2";
+import { applyProloguePath, PROLOGUE_CHOICES, PROLOGUE_COPY, type ProloguePath } from "./prologue.js";
 import {
   deleteChronicleFromBrowser,
   listChroniclesFromBrowser,
@@ -56,10 +57,10 @@ function createChronicle(id: string): ChronicleSaveV2 {
     schemaVersion: 2,
     chronicleId,
     activePersonaId: personaId,
-    world: { worldId: "world.aurea", timestamp: { day: 1, minuteOfDay: 8 * 60 + 30 }, locations: Object.fromEntries(locations.map(([locationId]) => [locationId, { id: locationId, illumination: "lit", entityIds: [] }])), entities: { [miriamId]: { id: miriamId, kind: "character", state: {} } } },
-    personas: { [personaId]: { id: personaId, currentLocation: officina, inventory: [], capabilities: { observatio: 1, litterae: 1, discernimentum: 1 } } },
+    world: { worldId: "world.aurea", timestamp: { day: 1, minuteOfDay: 7 * 60 + 45 }, locations: Object.fromEntries(locations.map(([locationId]) => [locationId, { id: locationId, illumination: locationId === officina ? "dim" : "lit", entityIds: [] }])), entities: { [miriamId]: { id: miriamId, kind: "character", state: {} } } },
+    personas: { [personaId]: { id: personaId, currentLocation: officina, inventory: [], capabilities: { observatio: 0, litterae: 0, discernimentum: 0 } } },
     knowledgeByPersona: { [personaId]: createEmptyKnowledgeState() },
-    eventLedger: [], scheduledConsequences: [], contentVersion: "playable-session-1",
+    eventLedger: [], scheduledConsequences: [], contentVersion: "new-game-flow-1",
   };
 }
 function labelFor(id: string) { return locations.find(([key]) => key === id)?.[1] ?? id; }
@@ -72,7 +73,7 @@ function appendEvent(chronicle: ChronicleSaveV2, type: string, payload: Record<s
 function App() {
   const [chronicle, setChronicle] = useState<ChronicleSaveV2 | null>(null);
   const [summaries, setSummaries] = useState<readonly ChronicleBrowserSummary[]>([]);
-  const [sessionState, setSessionState] = useState<"loading" | "menu" | "playing">("loading");
+  const [sessionState, setSessionState] = useState<"loading" | "menu" | "prologue" | "playing">("loading");
   const [liberOpen, setLiberOpen] = useState(false);
   const [storageState, setStorageState] = useState<"ready" | "saving" | "error">("ready");
 
@@ -98,14 +99,20 @@ function App() {
   }
   function newChronicle() {
     const id = `chronicle.${Date.now().toString(36)}`;
-    setChronicle(createChronicle(id)); setSessionState("playing");
+    setChronicle(createChronicle(id)); setSessionState("prologue");
+  }
+  function choosePrologue(path: ProloguePath) {
+    if (!chronicle) return;
+    const chosen = applyProloguePath(chronicle, path);
+    setChronicle(chosen);
+    setSessionState("playing");
   }
   async function resetChronicle(id: string) {
     if (!window.confirm("Apagar esta Crônica? Esta ação remove apenas o save local selecionado.")) return;
     await deleteChronicleFromBrowser(id); await refreshSessions();
   }
   async function returnToMenu() {
-    if (chronicle) await saveChronicleToBrowser(chronicle);
+    if (chronicle && sessionState === "playing") await saveChronicleToBrowser(chronicle);
     setChronicle(null); setLiberOpen(false); await refreshSessions(); setSessionState("menu");
   }
 
@@ -123,6 +130,27 @@ function App() {
           </div>
         ))}
         <p className="note">{storageState === "error" ? "Persistência local indisponível." : "Crônicas salvas localmente neste navegador."}</p>
+      </section>
+      <footer>Tehkné Solutions</footer>
+    </main>
+  );
+
+  if (sessionState === "prologue") return (
+    <main className="shell session prologue-screen">
+      <p className="eyebrow">PRÓLOGO</p>
+      <h1>{PROLOGUE_COPY.title}</h1>
+      <section className="session-card prologue-card">
+        <p className="prologue-opening">{PROLOGUE_COPY.opening}</p>
+        <h2>{PROLOGUE_COPY.prompt}</h2>
+        <div className="prologue-choices">
+          {PROLOGUE_CHOICES.map((choice) => (
+            <button key={choice.id} className="prologue-choice" onClick={() => choosePrologue(choice.id)}>
+              <strong>{choice.title}</strong>
+              <span>{choice.body}</span>
+            </button>
+          ))}
+        </div>
+        <button onClick={() => { setChronicle(null); setSessionState("menu"); }}>Voltar</button>
       </section>
       <footer>Tehkné Solutions</footer>
     </main>
