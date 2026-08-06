@@ -72,6 +72,15 @@ describe("answered IGNIS QUAESTIO consequences", () => {
     expect(chronicle.personas[personaId]!.capabilities.litterae).toBe(1);
   });
 
+  it("does not expose Miriam conversation before integration or outside her Archivum window", () => {
+    expect(projectMiriamIgnisConversation(fixture()).available).toBe(false);
+    let chronicle = integrateAnsweredIgnisQuaestio(fixture());
+    chronicle = { ...chronicle, world: { ...chronicle.world, timestamp: { day: 1, minuteOfDay: 12 * 60 } } };
+    expect(projectMiriamIgnisConversation(chronicle).available).toBe(false);
+    chronicle = { ...chronicle, world: { ...chronicle.world, timestamp: { day: 1, minuteOfDay: 10 * 60 } } };
+    expect(projectMiriamIgnisConversation(chronicle).available).toBe(true);
+  });
+
   it("lets demonstrated inquiry unlock one Miriam testimony without exposing her hidden knowledge", () => {
     let chronicle = integrateAnsweredIgnisQuaestio(fixture());
     expect(projectMiriamIgnisConversation(chronicle).available).toBe(true);
