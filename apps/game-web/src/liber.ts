@@ -65,5 +65,15 @@ export function projectChronicleLiber(chronicle: ChronicleSaveV2): LiberState {
     });
   }
 
+  const folioRecovered = chronicle.eventLedger.find((event) => event.type === "TransferBox7Opened");
+  if (folioRecovered) {
+    liber = recordDiariumEntry(liber, {
+      id: "diarium.ignis.missing-folio-recovered",
+      at: folioRecovered.occurredAt,
+      titleKey: "diarium.ignis.missing_folio_recovered",
+      eventRefs: Object.freeze([folioRecovered.id as string]),
+    });
+  }
+
   return liber;
 }
