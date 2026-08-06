@@ -3,6 +3,7 @@
 body { margin: 0; min-width: 320px; min-height: 100vh; background: radial-gradient(circle at top, #34291d 0%, #17120e 70%); }
 button { font: inherit; }
 .shell { width: min(1180px, calc(100% - 32px)); margin: 0 auto; padding: 28px 0 18px; }
+.shell.session { min-height: 100vh; display: flex; flex-direction: column; justify-content: center; color: #eee2c7; }
 header { display: flex; justify-content: space-between; align-items: end; gap: 24px; color: #eee2c7; margin-bottom: 18px; }
 .eyebrow { margin: 0; font-size: 12px; letter-spacing: .32em; opacity: .75; }
 h1 { margin: 4px 0 0; font-size: clamp(26px, 4vw, 44px); font-weight: 500; }
@@ -22,5 +23,12 @@ button:hover, button:focus-visible { background: #c8ad7c55; outline: 2px solid #
 .liber div { padding: 18px; border-right: 1px solid #594b37; display: flex; flex-direction: column; gap: 8px; }
 .liber div:last-child { border-right: 0; }
 .liber span { font-size: 13px; opacity: .72; line-height: 1.4; }
+.session-card { margin-top: 28px; width: min(720px, 100%); padding: 28px; border: 1px solid #78664b; background: #e0cfad; color: #33291d; box-shadow: 0 20px 60px #0008; }
+.session-card h2 { margin-top: 0; font-weight: 500; }
+.session-card .primary { width: 100%; background: #3d3022; color: #f1e6ce; border-color: #8d7755; margin-bottom: 18px; text-align: center; }
+.save-row { display: flex; justify-content: space-between; gap: 18px; padding: 16px 0; border-top: 1px solid #aa946f; align-items: center; }
+.save-row > div:first-child { display: flex; flex-direction: column; gap: 5px; }
+.save-row span { font-size: 13px; opacity: .72; }
+.save-actions { display: flex; gap: 8px; }
 footer { color: #9f927c; text-align: center; font-size: 12px; letter-spacing: .16em; margin-top: 18px; }
-@media (max-width: 760px) { header { align-items: flex-start; flex-direction: column; } .book { grid-template-columns: 1fr; } .narrative { border-right: 0; border-bottom: 1px solid #a9936a; } .liber { grid-template-columns: 1fr 1fr; } }
+@media (max-width: 760px) { header { align-items: flex-start; flex-direction: column; } .book { grid-template-columns: 1fr; } .narrative { border-right: 0; border-bottom: 1px solid #a9936a; } .liber { grid-template-columns: 1fr 1fr; } .save-row { align-items: stretch; flex-direction: column; } .save-actions { width: 100%; } .save-actions button { flex: 1; text-align: center; } }
