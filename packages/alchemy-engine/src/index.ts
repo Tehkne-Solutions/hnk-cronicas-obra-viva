@@ -116,3 +116,5 @@ export function resolveOperation(context: OperationContext): OperationResolution
     }
   }
 }
+
+export * from "./combustion.js";
