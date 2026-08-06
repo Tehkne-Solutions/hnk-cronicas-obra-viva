@@ -1,0 +1,17 @@
+{
+  "name": "@tehkne/hnk-cronicas-obra-viva",
+  "version": "0.0.1",
+  "private": true,
+  "packageManager": "pnpm@10.15.0",
+  "scripts": {
+    "build": "pnpm -r --if-present build",
+    "typecheck": "pnpm -r --if-present typecheck",
+    "test": "pnpm -r --if-present test",
+    "lint": "pnpm -r --if-present lint"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "typescript": "^5.9.0",
+    "vitest": "^3.2.0"
+  }
+}
