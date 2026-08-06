@@ -9,6 +9,8 @@ export type EventId = Brand<string, "EventId">;
 export type ClaimId = Brand<string, "ClaimId">;
 export type EvidenceId = Brand<string, "EvidenceId">;
 export type QuestionId = Brand<string, "QuestionId">;
+export type KnowledgeNodeId = Brand<string, "KnowledgeNodeId">;
+export type ChronicleId = Brand<string, "ChronicleId">;
 
 export type EntityKind =
   | "persona"
@@ -91,4 +93,124 @@ export interface PlayerIntent {
   readonly targetId?: EntityId;
   readonly instrumentId?: EntityId;
   readonly params?: Readonly<Record<string, unknown>>;
+}
+
+export interface LocationState {
+  readonly id: LocationId;
+  readonly illumination: "dark" | "dim" | "lit";
+  readonly entityIds: readonly EntityId[];
+}
+
+export interface EntityWorldState {
+  readonly id: EntityId;
+  readonly kind: EntityKind;
+  readonly locationId?: LocationId;
+  readonly state: Readonly<Record<string, unknown>>;
+}
+
+export interface WorldState {
+  readonly worldId: string;
+  readonly timestamp: WorldTimestamp;
+  readonly locations: Readonly<Record<string, LocationState>>;
+  readonly entities: Readonly<Record<string, EntityWorldState>>;
+}
+
+export interface CapabilityState {
+  readonly observatio: number;
+  readonly litterae: number;
+  readonly discernimentum: number;
+}
+
+export interface PersonaState {
+  readonly id: PersonaId;
+  readonly currentLocation: LocationId;
+  readonly inventory: readonly EntityId[];
+  readonly capabilities: CapabilityState;
+}
+
+export type KnowledgeKind =
+  | "material"
+  | "person"
+  | "place"
+  | "concept"
+  | "document"
+  | "operation"
+  | "phenomenon";
+
+export interface KnowledgeNode {
+  readonly id: KnowledgeNodeId;
+  readonly kind: KnowledgeKind;
+  readonly discoveredAt: WorldTimestamp;
+  readonly sourceRefs: readonly string[];
+}
+
+export type ClaimStatus =
+  | "reported"
+  | "observed"
+  | "hypothesized"
+  | "supported"
+  | "reproduced"
+  | "contradicted"
+  | "retired";
+
+export interface Claim {
+  readonly id: ClaimId;
+  readonly subjectId: EntityId | KnowledgeNodeId;
+  readonly predicate: string;
+  readonly value: unknown;
+  readonly status: ClaimStatus;
+  readonly createdAt: WorldTimestamp;
+  readonly assertedBy?: EntityRef;
+  readonly sourceRefs: readonly string[];
+}
+
+export type EvidenceKind =
+  | "observation"
+  | "experiment"
+  | "document"
+  | "testimony"
+  | "artifact"
+  | "event";
+
+export interface Evidence {
+  readonly id: EvidenceId;
+  readonly kind: EvidenceKind;
+  readonly producedAt: WorldTimestamp;
+  readonly sourceRef?: EntityRef;
+  readonly supports: readonly ClaimId[];
+  readonly contradicts: readonly ClaimId[];
+  readonly payload: Readonly<Record<string, unknown>>;
+}
+
+export type QuestionStatus =
+  | "open"
+  | "investigating"
+  | "partially_answered"
+  | "answered"
+  | "nescio";
+
+export interface Question {
+  readonly id: QuestionId;
+  readonly textKey: string;
+  readonly status: QuestionStatus;
+  readonly relatedClaims: readonly ClaimId[];
+  readonly relatedEvidence: readonly EvidenceId[];
+  readonly derivedQuestions: readonly QuestionId[];
+  readonly openedAt: WorldTimestamp;
+}
+
+export interface KnowledgeState {
+  readonly nodes: Readonly<Record<string, KnowledgeNode>>;
+  readonly claims: Readonly<Record<string, Claim>>;
+  readonly evidence: Readonly<Record<string, Evidence>>;
+  readonly questions: Readonly<Record<string, Question>>;
+}
+
+export function createEmptyKnowledgeState(): KnowledgeState {
+  return Object.freeze({
+    nodes: Object.freeze({}),
+    claims: Object.freeze({}),
+    evidence: Object.freeze({}),
+    questions: Object.freeze({}),
+  });
 }
