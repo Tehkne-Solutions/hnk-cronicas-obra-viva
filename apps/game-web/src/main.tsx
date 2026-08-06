@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from "react";
+import React, { useEffect, useState } from "react";
 import { createRoot } from "react-dom/client";
 import {
   advanceWorldTimestamp,
@@ -15,9 +15,11 @@ import type { NpcRoutine } from "@hnk/aurea-routines";
 import { composeNarrative } from "@hnk/narrative-engine";
 import { createLiberState, syncLiberKnowledge } from "@hnk/liber-engine";
 import type { ChronicleSaveV2 } from "@hnk/save-contract/v2";
+import { loadChronicleFromBrowser, saveChronicleToBrowser } from "./storage.js";
 import "./styles.css";
 
 const personaId = "persona.player" as PersonaId;
+const chronicleId = "chronicle.playable-shell" as ChronicleId;
 const miriamId = "npc.miriam" as EntityId;
 const officina = "aurea.officina" as LocationId;
 const archivum = "aurea.archivum" as LocationId;
@@ -68,13 +70,14 @@ const copy: Record<string, string> = {
   "scene.typographia.base": "A Typographia vibra com tipos móveis, papel e o cheiro mineral da tinta.",
   "scene.typographia.closed": "As portas da Typographia estão fechadas. O interior permanece escuro e imóvel atrás das vidraças.",
   "scene.forum.base": "O Forum reúne vozes, passos e notícias. Aqui, uma informação pode mudar de forma antes de atravessar a praça.",
+  "scene.forum.miriam": "Miriam está entre mercadores e escribas, ouvindo mais do que fala enquanto observa o movimento da praça.",
 };
 
 function createChronicle(): ChronicleSaveV2 {
   const knowledge = createEmptyKnowledgeState();
   return {
     schemaVersion: 2,
-    chronicleId: "chronicle.playable-shell" as ChronicleId,
+    chronicleId,
     activePersonaId: personaId,
     world: {
       worldId: "world.aurea",
@@ -95,7 +98,7 @@ function createChronicle(): ChronicleSaveV2 {
     knowledgeByPersona: { [personaId]: knowledge },
     eventLedger: [],
     scheduledConsequences: [],
-    contentVersion: "playable-shell-hardening-1",
+    contentVersion: "playable-shell-browser-persistence-1",
   };
 }
 
@@ -121,24 +124,52 @@ function appendEvent(chronicle: ChronicleSaveV2, type: string, payload: Record<s
 }
 
 function App() {
-  const [chronicle, setChronicle] = useState<ChronicleSaveV2>(() => createChronicle());
+  const [chronicle, setChronicle] = useState<ChronicleSaveV2 | null>(null);
   const [liberOpen, setLiberOpen] = useState(false);
+  const [storageState, setStorageState] = useState<"loading" | "ready" | "saving" | "error">("loading");
+
+  useEffect(() => {
+    let cancelled = false;
+    void loadChronicleFromBrowser(chronicleId as string)
+      .then((saved) => {
+        if (cancelled) return;
+        setChronicle(saved ?? createChronicle());
+        setStorageState("ready");
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setChronicle(createChronicle());
+        setStorageState("error");
+      });
+    return () => { cancelled = true; };
+  }, []);
+
+  useEffect(() => {
+    if (!chronicle || storageState === "loading") return;
+    const handle = window.setTimeout(() => {
+      setStorageState("saving");
+      void saveChronicleToBrowser(chronicle)
+        .then(() => setStorageState("ready"))
+        .catch(() => setStorageState("error"));
+    }, 150);
+    return () => window.clearTimeout(handle);
+  }, [chronicle]);
+
+  if (!chronicle) {
+    return <main className="shell"><p className="eyebrow">HENUVOKODAN</p><h1>Reabrindo a Crônica…</h1><footer>Tehkné Solutions</footer></main>;
+  }
 
   const persona = chronicle.personas[personaId as string]!;
   const location = persona.currentLocation;
   const now = chronicle.world.timestamp;
   const definition = locationDefinitions[location as string]!;
-
-  const projection = useMemo(
-    () => projectAureaScene({
-      world: chronicle.world,
-      now,
-      location: definition,
-      routines: [miriamRoutine],
-      localNpcNarrative: { [miriamId]: location === archivum ? "scene.archivum.miriam" : "scene.forum.miriam" },
-    }),
-    [chronicle.world, now, definition, location],
-  );
+  const projection = projectAureaScene({
+    world: chronicle.world,
+    now,
+    location: definition,
+    routines: [miriamRoutine],
+    localNpcNarrative: { [miriamId]: location === archivum ? "scene.archivum.miriam" : "scene.forum.miriam" },
+  });
 
   const knowledge = chronicle.knowledgeByPersona[personaId as string] ?? createEmptyKnowledgeState();
   const narrative = composeNarrative({ scene: projection.scene, perceived: [], knowledge });
@@ -164,7 +195,7 @@ function App() {
   }
 
   function observe() {
-    setChronicle((value) => appendEvent(value, "ObservedLocation", { locationId: location }));
+    setChronicle((value) => value ? appendEvent(value, "ObservedLocation", { locationId: location }) : value);
   }
 
   return (
@@ -174,7 +205,10 @@ function App() {
           <p className="eyebrow">HENUVOKODAN</p>
           <h1>Crônicas da Obra Viva</h1>
         </div>
-        <div className="clock">{formatTime(now.day, now.minuteOfDay)}</div>
+        <div>
+          <div className="clock">{formatTime(now.day, now.minuteOfDay)}</div>
+          <p className="note" aria-live="polite">{storageState === "saving" ? "Salvando Crônica…" : storageState === "error" ? "Persistência local indisponível" : "Crônica preservada"}</p>
+        </div>
       </header>
 
       <section className="book">
