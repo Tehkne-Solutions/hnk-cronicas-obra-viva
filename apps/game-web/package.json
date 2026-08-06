@@ -10,6 +10,7 @@
     "test": "vitest run"
   },
   "dependencies": {
+    "@hnk/alchemy-engine": "workspace:*",
     "@hnk/aurea-navigation": "workspace:*",
     "@hnk/aurea-routines": "workspace:*",
     "@hnk/aurea-scene": "workspace:*",
@@ -17,6 +18,7 @@
     "@hnk/liber-engine": "workspace:*",
     "@hnk/narrative-engine": "workspace:*",
     "@hnk/save-contract": "workspace:*",
+    "@hnk/world-engine": "workspace:*",
     "react": "^19.1.1",
     "react-dom": "^19.1.1"
   },
