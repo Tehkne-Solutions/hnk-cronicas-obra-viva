@@ -2,7 +2,12 @@ import "fake-indexeddb/auto";
 import { describe, expect, it } from "vitest";
 import { createEmptyKnowledgeState, type ChronicleId, type LocationId, type PersonaId } from "@hnk/domain";
 import type { ChronicleSaveV2 } from "@hnk/save-contract/v2";
-import { loadChronicleFromBrowser, saveChronicleToBrowser } from "./storage.js";
+import {
+  deleteChronicleFromBrowser,
+  listChroniclesFromBrowser,
+  loadChronicleFromBrowser,
+  saveChronicleToBrowser,
+} from "./storage.js";
 
 const personaId = "persona.browser-reload" as PersonaId;
 const chronicleId = "chronicle.browser-reload" as ChronicleId;
@@ -32,19 +37,8 @@ function fixture(): ChronicleSaveV2 {
       },
     },
     knowledgeByPersona: { [personaId]: createEmptyKnowledgeState() },
-    eventLedger: [{
-      id: "event.travel.persisted" as never,
-      type: "Travelled",
-      occurredAt: { day: 2, minuteOfDay: 15 * 60 + 35 },
-      payload: { from: officina, to: forum },
-    }],
-    scheduledConsequences: [{
-      id: "consequence.persisted",
-      causeEventId: "event.travel.persisted" as never,
-      dueAt: { day: 3, minuteOfDay: 9 * 60 },
-      eventType: "RumourSpread",
-      payload: { source: "forum" },
-    }],
+    eventLedger: [{ id: "event.travel.persisted" as never, type: "Travelled", occurredAt: { day: 2, minuteOfDay: 15 * 60 + 35 }, payload: { from: officina, to: forum } }],
+    scheduledConsequences: [{ id: "consequence.persisted", causeEventId: "event.travel.persisted" as never, dueAt: { day: 3, minuteOfDay: 9 * 60 }, eventType: "RumourSpread", payload: { source: "forum" } }],
     contentVersion: "browser-reload-test-1",
   };
 }
@@ -53,14 +47,25 @@ describe("browser Chronicle persistence", () => {
   it("round-trips location, time, ledger, knowledge and pending consequences", async () => {
     const beforeReload = fixture();
     await saveChronicleToBrowser(beforeReload);
-
     const afterReload = await loadChronicleFromBrowser(chronicleId as string);
-
     expect(afterReload).not.toBeNull();
     expect(afterReload?.world.timestamp).toEqual(beforeReload.world.timestamp);
     expect(afterReload?.personas[personaId as string]?.currentLocation).toBe(forum);
     expect(afterReload?.eventLedger).toEqual(beforeReload.eventLedger);
     expect(afterReload?.knowledgeByPersona).toEqual(beforeReload.knowledgeByPersona);
     expect(afterReload?.scheduledConsequences).toEqual(beforeReload.scheduledConsequences);
+  });
+
+  it("lists Chronicle summaries for the start screen", async () => {
+    await saveChronicleToBrowser(fixture());
+    const summaries = await listChroniclesFromBrowser();
+    const summary = summaries.find((item) => item.chronicleId === chronicleId);
+    expect(summary).toMatchObject({ day: 2, minuteOfDay: 935, currentLocation: forum, eventCount: 1 });
+  });
+
+  it("deletes only the selected Chronicle", async () => {
+    await saveChronicleToBrowser(fixture());
+    await deleteChronicleFromBrowser(chronicleId as string);
+    expect(await loadChronicleFromBrowser(chronicleId as string)).toBeNull();
   });
 });
