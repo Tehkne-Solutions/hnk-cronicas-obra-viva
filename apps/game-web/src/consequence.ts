@@ -82,14 +82,15 @@ export function integrateAnsweredIgnisQuaestio(chronicle: ChronicleSaveV2): Chro
 
 function relationFromChronicle(chronicle: ChronicleSaveV2): RelationState {
   const demonstratedInquiry = hasEvent(chronicle, "IgnisQuaestioIntegrated");
+  const comparedFolioEvidence = hasEvent(chronicle, "MissingFolioEvidenceCompared");
   return Object.freeze({
     subjectId: miriamId,
     objectId: chronicle.activePersonaId as unknown as EntityId,
-    trust: demonstratedInquiry ? 0.15 : 0,
-    respect: demonstratedInquiry ? 0.4 : 0,
+    trust: (demonstratedInquiry ? 0.15 : 0) + (comparedFolioEvidence ? 0.25 : 0),
+    respect: (demonstratedInquiry ? 0.4 : 0) + (comparedFolioEvidence ? 0.3 : 0),
     affection: 0,
     fear: 0,
-    suspicion: 0.05,
+    suspicion: comparedFolioEvidence ? 0 : 0.05,
     obligation: 0,
   });
 }
@@ -102,6 +103,7 @@ const miriam: TestimonyActorState = Object.freeze({
   ]),
   believes: Object.freeze([
     Object.freeze({ key: "ignis_manuscript_missing_folio", value: true }),
+    Object.freeze({ key: "ignis_missing_folio_last_seen", value: "archivum.transfer-box.7" }),
   ]),
   willingToSay: Object.freeze([
     Object.freeze({ key: "ignis_manuscript_missing_folio", value: true }),
@@ -111,6 +113,7 @@ const miriam: TestimonyActorState = Object.freeze({
 
 export interface MiriamIgnisView {
   readonly available: boolean;
+  readonly deeperAvailable: boolean;
   readonly text: string;
 }
 
@@ -119,14 +122,21 @@ export function projectMiriamIgnisConversation(chronicle: ChronicleSaveV2): Miri
   const minute = chronicle.world.timestamp.minuteOfDay;
   const miriamPresent = persona?.currentLocation === "aurea.archivum" && minute >= 8 * 60 && minute < 12 * 60;
   const integrated = hasEvent(chronicle, "IgnisQuaestioIntegrated");
-  const alreadySpoken = hasEvent(chronicle, "MiriamIgnisTestimonyReceived");
+  const firstSpoken = hasEvent(chronicle, "MiriamIgnisTestimonyReceived");
+  const compared = hasEvent(chronicle, "MissingFolioEvidenceCompared");
+  const deeperSpoken = hasEvent(chronicle, "MiriamFolioLocationTestimonyReceived");
   return {
-    available: Boolean(miriamPresent && integrated && !alreadySpoken),
-    text: alreadySpoken
-      ? "Miriam já lhe disse o que estava disposta a afirmar sobre o manuscrito. O restante exige novas evidências, não insistência."
-      : integrated
-        ? "Miriam percebe que você não veio pedir uma resposta pronta: você traz duas fontes e uma conclusão própria. Isso muda a forma como ela recebe sua pergunta."
-        : "Miriam escuta, mas ainda não há investigação suficiente para que sua pergunta tenha peso diante dela.",
+    available: Boolean(miriamPresent && integrated && !firstSpoken),
+    deeperAvailable: Boolean(miriamPresent && firstSpoken && compared && !deeperSpoken),
+    text: deeperSpoken
+      ? "Miriam confirmou que a última referência confiável aponta para a caixa de transferência 7. Agora há uma direção concreta a verificar."
+      : firstSpoken && compared
+        ? "Você retorna com duas pistas incompatíveis. Miriam percebe que você distinguiu documento de rumor em vez de escolher a versão mais conveniente."
+        : firstSpoken
+          ? "Miriam já lhe disse o que estava disposta a afirmar sobre o manuscrito. O restante exige novas evidências, não insistência."
+          : integrated
+            ? "Miriam percebe que você não veio pedir uma resposta pronta: você traz duas fontes e uma conclusão própria. Isso muda a forma como ela recebe sua pergunta."
+            : "Miriam escuta, mas ainda não há investigação suficiente para que sua pergunta tenha peso diante dela.",
   };
 }
 
@@ -166,6 +176,47 @@ export function askMiriamAboutIgnis(chronicle: ChronicleSaveV2): ChronicleSaveV2
   }), "MiriamIgnisTestimonyReceived", {
     speakerId: miriamId,
     propositionKey: spoken.proposition.key,
+    questionId: derivedQuestionId,
+  });
+}
+
+export function askMiriamWhereFolioWasLastSeen(chronicle: ChronicleSaveV2): ChronicleSaveV2 {
+  if (!projectMiriamIgnisConversation(chronicle).deeperAvailable) return chronicle;
+  const gated = applyDisclosureRules(miriam, relationFromChronicle(chronicle), [
+    Object.freeze({ propositionKey: "ignis_manuscript_missing_folio", minimumRespect: 0.25 }),
+    Object.freeze({ propositionKey: "ignis_missing_folio_last_seen", minimumRespect: 0.65, minimumTrust: 0.35 }),
+  ]);
+  const spoken = speakTestimony(gated, "ignis_missing_folio_last_seen");
+  if (!spoken) return chronicle;
+
+  const personaKey = chronicle.activePersonaId as string;
+  let knowledge = chronicle.knowledgeByPersona[personaKey];
+  if (!knowledge) return chronicle;
+  const claimId = "claim.miriam.folio-last-seen" as ClaimId;
+  const evidenceId = "evidence.miriam.folio-last-seen" as EvidenceId;
+  knowledge = recordTestimony(knowledge, spoken, chronicle.world.timestamp, claimId, evidenceId);
+  const question = knowledge.questions[derivedQuestionId as string];
+  if (question) {
+    knowledge = Object.freeze({
+      ...knowledge,
+      questions: Object.freeze({
+        ...knowledge.questions,
+        [derivedQuestionId as string]: Object.freeze({
+          ...question,
+          status: "partially_answered",
+          relatedClaims: Object.freeze([...question.relatedClaims, claimId]),
+          relatedEvidence: Object.freeze([...question.relatedEvidence, evidenceId]),
+        }),
+      }),
+    });
+  }
+  return append(Object.freeze({
+    ...chronicle,
+    knowledgeByPersona: Object.freeze({ ...chronicle.knowledgeByPersona, [personaKey]: knowledge }),
+  }), "MiriamFolioLocationTestimonyReceived", {
+    speakerId: miriamId,
+    propositionKey: spoken.proposition.key,
+    value: spoken.proposition.value,
     questionId: derivedQuestionId,
   });
 }
