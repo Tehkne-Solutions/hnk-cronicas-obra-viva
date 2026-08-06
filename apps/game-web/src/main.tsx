@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useState } from "react";
 import { createRoot } from "react-dom/client";
 import {
   advanceWorldTimestamp,
@@ -163,17 +163,13 @@ function App() {
   const location = persona.currentLocation;
   const now = chronicle.world.timestamp;
   const definition = locationDefinitions[location as string]!;
-
-  const projection = useMemo(
-    () => projectAureaScene({
-      world: chronicle.world,
-      now,
-      location: definition,
-      routines: [miriamRoutine],
-      localNpcNarrative: { [miriamId]: location === archivum ? "scene.archivum.miriam" : "scene.forum.miriam" },
-    }),
-    [chronicle.world, now, definition, location],
-  );
+  const projection = projectAureaScene({
+    world: chronicle.world,
+    now,
+    location: definition,
+    routines: [miriamRoutine],
+    localNpcNarrative: { [miriamId]: location === archivum ? "scene.archivum.miriam" : "scene.forum.miriam" },
+  });
 
   const knowledge = chronicle.knowledgeByPersona[personaId as string] ?? createEmptyKnowledgeState();
   const narrative = composeNarrative({ scene: projection.scene, perceived: [], knowledge });
@@ -185,15 +181,15 @@ function App() {
     const key = `${location}>${to}`;
     const reverse = `${to}>${location}`;
     const minutes = travelMinutes[key] ?? travelMinutes[reverse] ?? 15;
-    const result = travelChronicle(chronicle!, personaId, { from: location, to, travelMinutes: minutes });
+    const result = travelChronicle(chronicle, personaId, { from: location, to, travelMinutes: minutes });
     setChronicle(appendEvent(result.chronicle, "Travelled", { from: location, to, minutes }));
   }
 
   function wait() {
     const timestamp = advanceWorldTimestamp(now, 15);
     const next = {
-      ...chronicle!,
-      world: { ...chronicle!.world, timestamp },
+      ...chronicle,
+      world: { ...chronicle.world, timestamp },
     } satisfies ChronicleSaveV2;
     setChronicle(appendEvent(next, "Waited", { minutes: 15, locationId: location }));
   }
