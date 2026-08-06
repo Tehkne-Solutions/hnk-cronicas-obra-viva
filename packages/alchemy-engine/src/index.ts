@@ -111,7 +111,7 @@ export function resolveOperation(context: OperationContext): OperationResolution
       }
       return {
         events: [{ type: "SparkProduced", sourceA: context.targetId, sourceB: context.instrumentId }],
-        observations: ["operation.strike.spark"] },
+        observations: ["operation.strike.spark"],
       };
     }
   }
