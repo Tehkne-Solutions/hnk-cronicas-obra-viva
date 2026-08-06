@@ -22,6 +22,14 @@ function world(): WorldState {
   };
 }
 
+const burningState = {
+  lampId,
+  reservoirMaterialId: "oleum" as const,
+  wickMaterialId: "linum" as const,
+  wickSaturation: "saturated" as const,
+  ignitionState: "burning" as const,
+};
+
 describe("IGNIS illumination", () => {
   it("turns sustained lamp combustion into world illumination and expands perception", () => {
     const before = world();
@@ -36,7 +44,7 @@ describe("IGNIS illumination", () => {
     expect(resolvePerception({ observer: persona, world: before, knowledge: createEmptyKnowledgeState(), candidates })).toHaveLength(0);
 
     const lightEvents = deriveLightEvents({
-      combustion: { events: [{ type: "CombustionStarted", fuel: "oleum" }], observations: ["lamp.combustion.started"] },
+      combustion: { events: [{ type: "CombustionStarted", lampId }], nextState: burningState },
       sourceId: lampId,
       locationId: workshopId,
     });
@@ -49,7 +57,10 @@ describe("IGNIS illumination", () => {
 
   it("does not emit light when combustion is not sustained", () => {
     const events = deriveLightEvents({
-      combustion: { events: [{ type: "CombustionNotSustained", reason: "fuel_not_combustible" }], observations: ["lamp.combustion.failed"] },
+      combustion: {
+        events: [{ type: "CombustionNotSustained", lampId, reason: "fuel_not_combustible" }],
+        nextState: { ...burningState, ignitionState: "unlit" },
+      },
       sourceId: lampId,
       locationId: workshopId,
     });
