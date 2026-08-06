@@ -75,5 +75,15 @@ export function projectChronicleLiber(chronicle: ChronicleSaveV2): LiberState {
     });
   }
 
+  const folioRead = chronicle.eventLedger.find((event) => event.type === "RecoveredFolioRead");
+  if (folioRead) {
+    liber = recordDiariumEntry(liber, {
+      id: "diarium.folio.first-reading",
+      at: folioRead.occurredAt,
+      titleKey: "diarium.folio.first_reading",
+      eventRefs: Object.freeze([folioRead.id as string]),
+    });
+  }
+
   return liber;
 }
