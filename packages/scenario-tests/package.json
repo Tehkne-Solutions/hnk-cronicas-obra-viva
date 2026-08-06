@@ -1,0 +1,20 @@
+{
+  "name": "@hnk/scenario-tests",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@hnk/alchemy-engine": "workspace:*",
+    "@hnk/domain": "workspace:*",
+    "@hnk/knowledge-engine": "workspace:*",
+    "@hnk/liber-engine": "workspace:*",
+    "@hnk/perception-engine": "workspace:*",
+    "@hnk/save-contract": "workspace:*",
+    "@hnk/world-engine": "workspace:*"
+  }
+}
