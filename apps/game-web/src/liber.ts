@@ -45,5 +45,25 @@ export function projectChronicleLiber(chronicle: ChronicleSaveV2): LiberState {
     });
   }
 
+  const integrated = chronicle.eventLedger.find((event) => event.type === "IgnisQuaestioIntegrated");
+  if (integrated) {
+    liber = recordDiariumEntry(liber, {
+      id: "diarium.ignis.first-quaestio-answered",
+      at: integrated.occurredAt,
+      titleKey: "diarium.ignis.first_quaestio_answered",
+      eventRefs: Object.freeze([integrated.id as string]),
+    });
+  }
+
+  const testimony = chronicle.eventLedger.find((event) => event.type === "MiriamIgnisTestimonyReceived");
+  if (testimony) {
+    liber = recordDiariumEntry(liber, {
+      id: "diarium.miriam.ignis-testimony",
+      at: testimony.occurredAt,
+      titleKey: "diarium.miriam.ignis_testimony",
+      eventRefs: Object.freeze([testimony.id as string]),
+    });
+  }
+
   return liber;
 }
