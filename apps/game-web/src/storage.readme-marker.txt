@@ -1,0 +1,1 @@
+Browser reload contract coverage added. Tehkné Solutions.
