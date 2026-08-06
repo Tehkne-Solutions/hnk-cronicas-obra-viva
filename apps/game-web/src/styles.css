@@ -30,5 +30,11 @@ button:hover, button:focus-visible { background: #c8ad7c55; outline: 2px solid #
 .save-row > div:first-child { display: flex; flex-direction: column; gap: 5px; }
 .save-row span { font-size: 13px; opacity: .72; }
 .save-actions { display: flex; gap: 8px; }
+.prologue-card { width: min(820px, 100%); }
+.prologue-opening { margin: 0 0 28px; font-size: clamp(18px, 2.4vw, 24px); line-height: 1.6; }
+.prologue-choices { display: grid; gap: 12px; margin: 18px 0 24px; }
+.prologue-choice { display: flex; flex-direction: column; gap: 7px; padding: 18px; }
+.prologue-choice strong { font-size: 17px; }
+.prologue-choice span { font-size: 14px; line-height: 1.5; opacity: .78; }
 footer { color: #9f927c; text-align: center; font-size: 12px; letter-spacing: .16em; margin-top: 18px; }
 @media (max-width: 760px) { header { align-items: flex-start; flex-direction: column; } .book { grid-template-columns: 1fr; } .narrative { border-right: 0; border-bottom: 1px solid #a9936a; } .liber { grid-template-columns: 1fr 1fr; } .save-row { align-items: stretch; flex-direction: column; } .save-actions { width: 100%; } .save-actions button { flex: 1; text-align: center; } }
