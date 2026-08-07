@@ -16,11 +16,11 @@ export const RECOVERED_FOLIO: ScriptumDocument = Object.freeze({
   entityId: folioId,
   materialKey: "paper.handmade.rag-fibre",
   layers: Object.freeze([
-    Object.freeze({ id: "surface", kind: "surface", textKey: "folio.surface.watermarked", requires: { illumination: "dim" } }),
-    Object.freeze({ id: "main-text", kind: "text", textKey: "folio.text.three_witnesses", requires: { illumination: "lit", litterae: 1 } }),
-    Object.freeze({ id: "burn-damage", kind: "damage", textKey: "folio.damage.scorched_lower_edge", requires: { illumination: "lit", discernimentum: 1 } }),
-    Object.freeze({ id: "margin-hand", kind: "marginalia", textKey: "folio.margin.do_not_trust_one_witness", requires: { illumination: "lit", litterae: 1, discernimentum: 1 } }),
-    Object.freeze({ id: "scribe-mark", kind: "provenance", textKey: "folio.provenance.scribe_mark", requires: { illumination: "lit", discernimentum: 2 } }),
+    Object.freeze({ id: "surface", kind: "surface", textKey: "folio.surface.watermarked", requires: { illumination: "dim" as const } }),
+    Object.freeze({ id: "main-text", kind: "text", textKey: "folio.text.three_witnesses", requires: { illumination: "lit" as const, litterae: 1 } }),
+    Object.freeze({ id: "burn-damage", kind: "damage", textKey: "folio.damage.scorched_lower_edge", requires: { illumination: "lit" as const, discernimentum: 1 } }),
+    Object.freeze({ id: "margin-hand", kind: "marginalia", textKey: "folio.margin.do_not_trust_one_witness", requires: { illumination: "lit" as const, litterae: 1, discernimentum: 1 } }),
+    Object.freeze({ id: "scribe-mark", kind: "provenance", textKey: "folio.provenance.scribe_mark", requires: { illumination: "lit" as const, discernimentum: 2 } }),
   ]),
   provenance: Object.freeze([
     Object.freeze({ id: "prov.folio.transfer-ledger", sourceRef: "evidence.folio.archivum-ledger", claimKey: "provenance.folio.transfer-cycle", confidence: "medium" }),
@@ -103,7 +103,8 @@ export function readRecoveredFolio(chronicle: ChronicleSaveV2): ChronicleSaveV2 
 
   const mainTextSeen = Boolean(knowledge.claims["claim.folio.main-text"]);
   if (mainTextSeen && !knowledge.questions[contentQuestionId as string]) {
-    const relatedClaims = ["claim.folio.main-text", "claim.folio.margin-hand"].filter((id) => Boolean(knowledge.claims[id]));
+    const currentKnowledge = knowledge;
+    const relatedClaims = ["claim.folio.main-text", "claim.folio.margin-hand"].filter((id) => Boolean(currentKnowledge.claims[id]));
     const relatedEvidence = relatedClaims.map((id) => id.replace("claim.", "evidence.")) as unknown as readonly EvidenceId[];
     const question: Question = Object.freeze({
       id: contentQuestionId,
