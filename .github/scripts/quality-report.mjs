@@ -14,15 +14,14 @@ function countCampaignScenarios(source) {
   const match = source.match(/Array\.from\(\{ length: (\d+) \}/);
   return match ? Number(match[1]) : 0;
 }
-function mutationMetrics(source) {
-  const mutantIds = [...source.matchAll(/id: "([^"]+)"/g)].map((match) => match[1]);
-  const required = source.match(/const REQUIRED_DOMAINS[^=]*= \[([^\]]+)\]/s);
-  const domains = required ? [...required[1].matchAll(/"([^"]+)"/g)].map((match) => match[1]) : [];
-  return { mutants: mutantIds.length, domains };
-}
-function milestoneMetrics(source) {
-  const match = source.match(/const REQUIRED_MILESTONES[^=]*= \[([^\]]+)\]/s);
+function quotedArray(source, declaration) {
+  const match = source.match(new RegExp(`const ${declaration}[^=]*= \\[([^\\]]+)\\]`, "s"));
   return match ? [...match[1].matchAll(/"([^"]+)"/g)].map((item) => item[1]) : [];
+}
+function mutationMetrics(source) {
+  const block = source.match(/const mutations:[\s\S]*?= \[([\s\S]*?)\n\];/);
+  const mutantIds = block ? [...block[1].matchAll(/\n\s*id: "([^"]+)"/g)].map((match) => match[1]) : [];
+  return { mutants: mutantIds.length, domains: quotedArray(source, "requiredDomains") };
 }
 
 const [explorationSource, simulationSource, mutationSource, observabilitySource] = await Promise.all([
@@ -32,7 +31,7 @@ const [explorationSource, simulationSource, mutationSource, observabilitySource]
   read("apps/game-web/src/observability-gate.test.ts"),
 ]);
 const mutation = mutationMetrics(mutationSource);
-const milestones = milestoneMetrics(observabilitySource);
+const milestones = quotedArray(observabilitySource, "criticalMilestones");
 const gates = {
   typecheck: { status: status(process.env.HNK_TYPECHECK_STATUS), durationMs: number(process.env.HNK_TYPECHECK_MS) },
   test: { status: status(process.env.HNK_TEST_STATUS), durationMs: number(process.env.HNK_TEST_MS) },
