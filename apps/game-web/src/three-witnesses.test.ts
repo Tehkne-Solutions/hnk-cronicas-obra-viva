@@ -18,7 +18,7 @@ function prerequisiteEvent(type: string, index: number) {
   };
 }
 
-function fixture(): ChronicleSaveV2 {
+function fixture(includeMemoryComparison = true): ChronicleSaveV2 {
   const question: Question = {
     id: questionId,
     textKey: "quaestio.folio.what_are_the_three_witnesses",
@@ -49,6 +49,7 @@ function fixture(): ChronicleSaveV2 {
       prerequisiteEvent("RecoveredFolioRead", 2),
       prerequisiteEvent("MissingFolioLedgerChecked", 3),
       prerequisiteEvent("MiriamIgnisTestimonyReceived", 4),
+      ...(includeMemoryComparison ? [prerequisiteEvent("MemoryWitnessesCompared", 5)] : []),
     ],
     scheduledConsequences: [],
     contentVersion: "three-witnesses-test",
@@ -75,7 +76,13 @@ describe("Three Witnesses", () => {
     expect(projectThreeWitnesses(chronicle).complete).toBe(false);
   });
 
-  it("answers only after matter, word and memory converge", () => {
+  it("does not integrate memory before witness-source comparison", () => {
+    const chronicle = at(fixture(false), forum, 14 * 60);
+    expect(projectThreeWitnesses(chronicle).availableActions).not.toContain("hear_memory");
+    expect(applyThreeWitnessAction(chronicle, "hear_memory")).toBe(chronicle);
+  });
+
+  it("answers only after matter, word and compared memory converge", () => {
     let chronicle = fixture();
     chronicle = applyThreeWitnessAction(chronicle, "inspect_matter");
     chronicle = at(chronicle, typographia);
