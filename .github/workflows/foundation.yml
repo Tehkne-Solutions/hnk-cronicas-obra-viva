@@ -8,6 +8,8 @@ on:
 jobs:
   validate:
     runs-on: ubuntu-latest
+    env:
+      HNK_TELEMETRY_BASE_URL: ${{ secrets.HNK_TELEMETRY_BASE_URL }}
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
@@ -17,6 +19,53 @@ jobs:
         with:
           node-version: 22
       - run: pnpm install --frozen-lockfile=false
-      - run: pnpm typecheck
-      - run: pnpm test
-      - run: pnpm build
+      - name: Typecheck
+        id: typecheck
+        shell: bash
+        run: |
+          start=$(date +%s%3N)
+          pnpm typecheck
+          result=$?
+          end=$(date +%s%3N)
+          echo "duration_ms=$((end-start))" >> "$GITHUB_OUTPUT"
+          exit $result
+      - name: Test
+        id: test
+        shell: bash
+        run: |
+          start=$(date +%s%3N)
+          pnpm test
+          result=$?
+          end=$(date +%s%3N)
+          echo "duration_ms=$((end-start))" >> "$GITHUB_OUTPUT"
+          exit $result
+      - name: Build
+        id: build
+        shell: bash
+        run: |
+          start=$(date +%s%3N)
+          pnpm build
+          result=$?
+          end=$(date +%s%3N)
+          echo "duration_ms=$((end-start))" >> "$GITHUB_OUTPUT"
+          exit $result
+      - name: Generate CI quality telemetry
+        if: always()
+        env:
+          HNK_TYPECHECK_STATUS: ${{ steps.typecheck.outcome }}
+          HNK_TYPECHECK_MS: ${{ steps.typecheck.outputs.duration_ms }}
+          HNK_TEST_STATUS: ${{ steps.test.outcome }}
+          HNK_TEST_MS: ${{ steps.test.outputs.duration_ms }}
+          HNK_BUILD_STATUS: ${{ steps.build.outcome }}
+          HNK_BUILD_MS: ${{ steps.build.outputs.duration_ms }}
+        run: node .github/scripts/quality-report.mjs
+      - name: Upload CI quality report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ci-quality-report-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            artifacts/ci-quality-report.json
+            artifacts/ci-quality-report.md
+          if-no-files-found: error
+          retention-days: 30
