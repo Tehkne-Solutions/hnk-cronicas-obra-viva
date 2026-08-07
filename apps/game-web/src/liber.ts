@@ -85,5 +85,15 @@ export function projectChronicleLiber(chronicle: ChronicleSaveV2): LiberState {
     });
   }
 
+  const witnesses = chronicle.eventLedger.find((event) => event.type === "ThreeWitnessesUnderstood");
+  if (witnesses) {
+    liber = recordDiariumEntry(liber, {
+      id: "diarium.folio.three-witnesses-understood",
+      at: witnesses.occurredAt,
+      titleKey: "diarium.folio.three_witnesses_understood",
+      eventRefs: Object.freeze([witnesses.id as string]),
+    });
+  }
+
   return liber;
 }
