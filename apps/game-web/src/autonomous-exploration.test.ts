@@ -116,14 +116,14 @@ function candidates(chronicle: ChronicleSaveV2): Candidate[] {
 
   const now = chronicle.world.timestamp.minuteOfDay;
   for (const minute of keyMinutes) {
-    if (minute <= now) continue;
+    const delta = minute > now ? minute - now : (24 * 60 - now) + minute;
     result.push({
-      id: `wait:${minute}`,
+      id: `wait:${minute}:${minute > now ? "today" : "next-day"}`,
       apply: (current) => ({
         ...current,
         world: {
           ...current.world,
-          timestamp: advanceWorldTimestamp(current.world.timestamp, minute - current.world.timestamp.minuteOfDay),
+          timestamp: advanceWorldTimestamp(current.world.timestamp, delta),
         },
       }),
     });
@@ -139,12 +139,18 @@ function stateSignature(chronicle: ChronicleSaveV2): string[] {
   const actions = projectPlayableLoop(chronicle).actions.map((action) => `action:${action.id}`);
   const ignis = projectIgnis(chronicle).availableActions.map((action) => `action:ignis:${action}`);
   const investigation = projectIgnisInvestigation(chronicle).availableActions.map((action) => `action:investigation:${action}`);
+  const miriam = projectMiriamIgnisConversation(chronicle);
+  const contextual = [
+    miriam.available ? "action:miriam:first" : "",
+    miriam.deeperAvailable ? "action:miriam:deeper" : "",
+  ].filter(Boolean);
   return [
     ...events,
     ...questions,
     ...actions,
     ...ignis,
     ...investigation,
+    ...contextual,
     `location:${chronicle.personas[personaId]!.currentLocation}`,
   ];
 }
@@ -165,6 +171,12 @@ function isComplete(chronicle: ChronicleSaveV2): boolean {
   return chronicle.eventLedger.some((event) => event.type === "ThreeWitnessesUnderstood");
 }
 
+function utilityBonus(candidateId: string): number {
+  if (candidateId.startsWith("travel:")) return 0;
+  if (candidateId.startsWith("wait:")) return 2;
+  return 15;
+}
+
 function runExplorer(seed: number) {
   let chronicle = freshChronicle(seed);
   const random = rng(seed);
@@ -179,8 +191,11 @@ function runExplorer(seed: number) {
         const signatures = stateSignature(next);
         const novelty = signatures.filter((signature) => !visited.has(signature)).length;
         const terminalBonus = isComplete(next) ? 1000 : 0;
-        const eventDelta = next.eventLedger.length - chronicle.eventLedger.length;
-        return { candidate, next, score: terminalBonus + novelty * 20 + eventDelta * 3 + random() };
+        return {
+          candidate,
+          next,
+          score: terminalBonus + novelty * 20 + utilityBonus(candidate.id) + random(),
+        };
       })
       .filter((entry): entry is NonNullable<typeof entry> => entry !== null)
       .sort((a, b) => b.score - a.score);
