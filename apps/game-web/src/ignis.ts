@@ -82,7 +82,10 @@ function latestLampState(chronicle: ChronicleSaveV2): LampCombustionState {
 }
 
 function prologuePath(chronicle: ChronicleSaveV2): string | undefined {
-  return chronicle.eventLedger.find((event) => event.type === "ProloguePathChosen")?.payload.path as string | undefined;
+  const event = chronicle.eventLedger.find((item) => item.type === "ProloguePathChosen");
+  if (!event || typeof event.payload !== "object" || event.payload === null) return undefined;
+  const path = (event.payload as Readonly<Record<string, unknown>>).path;
+  return typeof path === "string" ? path : undefined;
 }
 
 function hasReadManuscript(chronicle: ChronicleSaveV2): boolean {

@@ -29,6 +29,6 @@ describe("claim corroboration", () => {
     };
 
     expect(assessClaim(state, claimId as string).status).toBe("contested");
-    expect(evidenceKindsForClaim(state, claimId as string).sort()).toEqual(["document", "testimony"]);
+    expect([...evidenceKindsForClaim(state, claimId as string)].sort()).toEqual(["document", "testimony"]);
   });
 });

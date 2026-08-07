@@ -42,7 +42,7 @@ export function recordScriptumObservation(
     id: ids.evidenceId,
     kind: "document",
     producedAt: at,
-    sourceRef: { id: observation.documentId, kind: "document" },
+    sourceRef: { id: observation.documentId, kind: "document" as const },
     supports: [ids.claimId],
     contradicts: [],
     payload: Object.freeze({
@@ -81,7 +81,7 @@ export function recordProvenanceClaim(
     id: evidenceId,
     kind: "document",
     producedAt: at,
-    sourceRef: { id: documentId, kind: "document" },
+    sourceRef: { id: documentId, kind: "document" as const },
     supports: [claimId],
     contradicts: [],
     payload: Object.freeze({
