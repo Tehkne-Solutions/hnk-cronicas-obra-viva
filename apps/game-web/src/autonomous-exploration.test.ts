@@ -17,6 +17,7 @@ import {
   projectMiriamIgnisConversation,
 } from "./consequence.js";
 import { applyPlayableLoopAction, projectPlayableLoop, type PlayableLoopActionId } from "./playable-loop.js";
+import { minimizeFailingTrace } from "./failure-minimizer.js";
 
 const personaId = "persona.player" as PersonaId;
 const officina = "aurea.officina" as LocationId;
@@ -225,12 +226,41 @@ function runExplorer(seed: number) {
   return { chronicle, trace, visited };
 }
 
+function replayTrace(seed: number, trace: readonly string[]): ChronicleSaveV2 | null {
+  let chronicle = freshChronicle(seed);
+  for (const id of trace) {
+    const candidate = candidates(chronicle).find((entry) => entry.id === id);
+    if (!candidate) return null;
+    const next = candidate.apply(chronicle);
+    if (next === chronicle) return null;
+    chronicle = next;
+  }
+  return chronicle;
+}
+
+function diagnosticMessage(seed: number, trace: readonly string[], chronicle: ChronicleSaveV2): string {
+  let minimized = [...trace];
+  if (!healthy(chronicle)) {
+    minimized = minimizeFailingTrace(trace, (candidate) => {
+      const replay = replayTrace(seed, candidate);
+      return replay !== null && !healthy(replay);
+    });
+  }
+
+  return [
+    `seed=${seed}`,
+    `trace=${trace.join(" -> ")}`,
+    `minimized=${minimized.join(" -> ")}`,
+  ].join("\n");
+}
+
 describe("AUTONOMOUS EXPLORATION GATE", () => {
   for (const seed of [101, 202, 303, 404, 505, 606, 707, 808, 909, 1010, 1111, 1212]) {
     it(`seed ${seed} reaches the campaign understanding while maximizing unseen state coverage`, () => {
       const result = runExplorer(seed);
-      expect(healthy(result.chronicle)).toBe(true);
-      expect(isComplete(result.chronicle), `seed=${seed}\ntrace=${result.trace.join(" -> ")}`).toBe(true);
+      const diagnostics = diagnosticMessage(seed, result.trace, result.chronicle);
+      expect(healthy(result.chronicle), diagnostics).toBe(true);
+      expect(isComplete(result.chronicle), diagnostics).toBe(true);
       expect(result.visited.size).toBeGreaterThan(20);
       expect(result.trace.length).toBeLessThanOrEqual(120);
     });
