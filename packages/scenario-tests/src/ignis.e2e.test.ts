@@ -6,6 +6,7 @@ import {
   type EntityId,
   type EvidenceId,
   type KnowledgeNodeId,
+  type KnowledgeState,
   type LocationId,
   type PersonaId,
   type QuestionId,
@@ -77,13 +78,13 @@ describe("IGNIS E2E Gate", () => {
     };
 
     let world = initialWorld();
-    let knowledge = {
+    let knowledge: KnowledgeState = {
       ...createEmptyKnowledgeState(),
       questions: {
         [questionId as string]: {
           id: questionId,
           textKey: "question.lamp.light",
-          status: "investigating" as const,
+          status: "investigating",
           relatedClaims: [],
           relatedEvidence: [],
           derivedQuestions: [],
