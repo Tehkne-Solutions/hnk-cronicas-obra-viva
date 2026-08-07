@@ -31,14 +31,26 @@ const officina = "aurea.officina" as LocationId;
 const archivum = "aurea.archivum" as LocationId;
 const typographia = "aurea.typographia" as LocationId;
 const forum = "aurea.forum" as LocationId;
+const expectedContentVersion = "mutation-survival-gate-2";
 
-type MutationId =
-  | "duplicate-event-id"
-  | "break-current-location"
-  | "erase-active-knowledge"
-  | "suppress-completion-event"
-  | "reopen-final-question"
-  | "drop-memory-comparison-evidence";
+const requiredDomains = [
+  "knowledge",
+  "event-ledger",
+  "time",
+  "location",
+  "inventory",
+  "testimony",
+  "consequence",
+  "persistence",
+] as const;
+
+type MutationDomain = (typeof requiredDomains)[number];
+
+interface SemanticMutation {
+  readonly id: string;
+  readonly domain: MutationDomain;
+  readonly apply: (chronicle: ChronicleSaveV2) => ChronicleSaveV2;
+}
 
 function freshChronicle(): ChronicleSaveV2 {
   return {
@@ -67,7 +79,7 @@ function freshChronicle(): ChronicleSaveV2 {
     knowledgeByPersona: { [personaId]: createEmptyKnowledgeState() },
     eventLedger: [],
     scheduledConsequences: [],
-    contentVersion: "mutation-survival-gate-1",
+    contentVersion: expectedContentVersion,
   };
 }
 
@@ -125,95 +137,208 @@ function buildCompletedCampaign(): ChronicleSaveV2 {
 }
 
 function semanticOracle(chronicle: ChronicleSaveV2): boolean {
+  if (chronicle.schemaVersion !== 2 || chronicle.contentVersion !== expectedContentVersion) return false;
+  if (chronicle.world.timestamp.day < 1) return false;
+  if (chronicle.world.timestamp.minuteOfDay < 0 || chronicle.world.timestamp.minuteOfDay >= 24 * 60) return false;
+
   const persona = chronicle.personas[chronicle.activePersonaId];
   if (!persona || !chronicle.world.locations[persona.currentLocation]) return false;
+  if (persona.inventory.length !== 0) return false;
+  if (persona.capabilities.litterae < 2 || persona.capabilities.discernimentum < 1) return false;
+
   const knowledge = chronicle.knowledgeByPersona[chronicle.activePersonaId];
   if (!knowledge) return false;
   if (new Set(chronicle.eventLedger.map((event) => event.id)).size !== chronicle.eventLedger.length) return false;
   try { projectPlayableLoop(chronicle); } catch { return false; }
 
+  const eventTypes = new Set(chronicle.eventLedger.map((event) => event.type));
+  const firstQuestion = knowledge.questions["question.ignis.first-flame"];
+  const missingFolio = knowledge.questions["question.ignis.missing-folio"];
+  const finalQuestion = knowledge.questions["question.folio.three-witnesses"];
+
   return (
-    chronicle.eventLedger.some((event) => event.type === "ThreeWitnessesUnderstood") &&
-    knowledge.questions["question.folio.three-witnesses"]?.status === "answered" &&
-    knowledge.questions["question.ignis.missing-folio"]?.status === "answered" &&
+    eventTypes.has("IgnisQuaestioIntegrated") &&
+    eventTypes.has("MiriamIgnisTestimonyReceived") &&
+    eventTypes.has("MiriamFolioLocationTestimonyReceived") &&
+    eventTypes.has("TransferBox7Opened") &&
+    eventTypes.has("ThreeWitnessesUnderstood") &&
+    firstQuestion?.derivedQuestions.includes("question.ignis.missing-folio" as never) === true &&
+    missingFolio?.status === "answered" &&
+    finalQuestion?.status === "answered" &&
+    Boolean(knowledge.evidence["evidence.miriam.ignis-missing-folio"]) &&
+    Boolean(knowledge.evidence["evidence.miriam.folio-last-seen"]) &&
     Boolean(knowledge.evidence["evidence.memory.source-comparison"])
   );
 }
 
-function mutate(chronicle: ChronicleSaveV2, mutation: MutationId): ChronicleSaveV2 {
-  if (mutation === "duplicate-event-id") {
-    const last = chronicle.eventLedger[chronicle.eventLedger.length - 1]!;
-    return { ...chronicle, eventLedger: [...chronicle.eventLedger, { ...last }] };
-  }
+function withoutEvent(chronicle: ChronicleSaveV2, type: string): ChronicleSaveV2 {
+  return { ...chronicle, eventLedger: chronicle.eventLedger.filter((event) => event.type !== type) };
+}
 
-  if (mutation === "break-current-location") {
-    return {
+const mutations: readonly SemanticMutation[] = [
+  {
+    id: "duplicate-event-id",
+    domain: "event-ledger",
+    apply: (chronicle) => {
+      const last = chronicle.eventLedger[chronicle.eventLedger.length - 1]!;
+      return { ...chronicle, eventLedger: [...chronicle.eventLedger, { ...last }] };
+    },
+  },
+  {
+    id: "suppress-completion-event",
+    domain: "event-ledger",
+    apply: (chronicle) => withoutEvent(chronicle, "ThreeWitnessesUnderstood"),
+  },
+  {
+    id: "break-current-location",
+    domain: "location",
+    apply: (chronicle) => ({
       ...chronicle,
       personas: {
         ...chronicle.personas,
         [personaId]: { ...chronicle.personas[personaId]!, currentLocation: "aurea.missing" as LocationId },
       },
-    };
-  }
-
-  if (mutation === "erase-active-knowledge") {
-    const { [personaId]: _removed, ...remaining } = chronicle.knowledgeByPersona;
-    return { ...chronicle, knowledgeByPersona: remaining };
-  }
-
-  if (mutation === "suppress-completion-event") {
-    return {
-      ...chronicle,
-      eventLedger: chronicle.eventLedger.filter((event) => event.type !== "ThreeWitnessesUnderstood"),
-    };
-  }
-
-  const knowledge = chronicle.knowledgeByPersona[personaId]!;
-  if (mutation === "reopen-final-question") {
-    const question = knowledge.questions["question.folio.three-witnesses"]!;
-    return {
-      ...chronicle,
-      knowledgeByPersona: {
-        ...chronicle.knowledgeByPersona,
-        [personaId]: {
-          ...knowledge,
-          questions: {
-            ...knowledge.questions,
-            [question.id]: { ...question, status: "open" },
+    }),
+  },
+  {
+    id: "erase-active-knowledge",
+    domain: "knowledge",
+    apply: (chronicle) => {
+      const { [personaId]: _removed, ...remaining } = chronicle.knowledgeByPersona;
+      return { ...chronicle, knowledgeByPersona: remaining };
+    },
+  },
+  {
+    id: "reopen-final-question",
+    domain: "knowledge",
+    apply: (chronicle) => {
+      const knowledge = chronicle.knowledgeByPersona[personaId]!;
+      const question = knowledge.questions["question.folio.three-witnesses"]!;
+      return {
+        ...chronicle,
+        knowledgeByPersona: {
+          ...chronicle.knowledgeByPersona,
+          [personaId]: {
+            ...knowledge,
+            questions: { ...knowledge.questions, [question.id]: { ...question, status: "open" } },
           },
         },
-      },
-    };
-  }
-
-  const { ["evidence.memory.source-comparison"]: _removed, ...remainingEvidence } = knowledge.evidence;
-  return {
-    ...chronicle,
-    knowledgeByPersona: {
-      ...chronicle.knowledgeByPersona,
-      [personaId]: { ...knowledge, evidence: remainingEvidence },
+      };
     },
-  };
-}
+  },
+  {
+    id: "drop-memory-comparison-evidence",
+    domain: "knowledge",
+    apply: (chronicle) => {
+      const knowledge = chronicle.knowledgeByPersona[personaId]!;
+      const { ["evidence.memory.source-comparison"]: _removed, ...remainingEvidence } = knowledge.evidence;
+      return {
+        ...chronicle,
+        knowledgeByPersona: {
+          ...chronicle.knowledgeByPersona,
+          [personaId]: { ...knowledge, evidence: remainingEvidence },
+        },
+      };
+    },
+  },
+  {
+    id: "day-zero",
+    domain: "time",
+    apply: (chronicle) => ({
+      ...chronicle,
+      world: { ...chronicle.world, timestamp: { ...chronicle.world.timestamp, day: 0 } },
+    }),
+  },
+  {
+    id: "minute-overflow",
+    domain: "time",
+    apply: (chronicle) => ({
+      ...chronicle,
+      world: { ...chronicle.world, timestamp: { ...chronicle.world.timestamp, minuteOfDay: 24 * 60 } },
+    }),
+  },
+  {
+    id: "inject-ghost-inventory-item",
+    domain: "inventory",
+    apply: (chronicle) => ({
+      ...chronicle,
+      personas: {
+        ...chronicle.personas,
+        [personaId]: {
+          ...chronicle.personas[personaId]!,
+          inventory: ["entity.ghost-item" as EntityId],
+        },
+      },
+    }),
+  },
+  {
+    id: "drop-first-miriam-testimony",
+    domain: "testimony",
+    apply: (chronicle) => withoutEvent(chronicle, "MiriamIgnisTestimonyReceived"),
+  },
+  {
+    id: "drop-deep-miriam-testimony-evidence",
+    domain: "testimony",
+    apply: (chronicle) => {
+      const knowledge = chronicle.knowledgeByPersona[personaId]!;
+      const { ["evidence.miriam.folio-last-seen"]: _removed, ...remainingEvidence } = knowledge.evidence;
+      return {
+        ...chronicle,
+        knowledgeByPersona: {
+          ...chronicle.knowledgeByPersona,
+          [personaId]: { ...knowledge, evidence: remainingEvidence },
+        },
+      };
+    },
+  },
+  {
+    id: "erase-ignis-integration-event",
+    domain: "consequence",
+    apply: (chronicle) => withoutEvent(chronicle, "IgnisQuaestioIntegrated"),
+  },
+  {
+    id: "rollback-practiced-capabilities",
+    domain: "consequence",
+    apply: (chronicle) => ({
+      ...chronicle,
+      personas: {
+        ...chronicle.personas,
+        [personaId]: {
+          ...chronicle.personas[personaId]!,
+          capabilities: { ...chronicle.personas[personaId]!.capabilities, litterae: 0, discernimentum: 0 },
+        },
+      },
+    }),
+  },
+  {
+    id: "schema-version-downgrade",
+    domain: "persistence",
+    apply: (chronicle) => ({ ...chronicle, schemaVersion: 1 as never }),
+  },
+  {
+    id: "content-version-drift",
+    domain: "persistence",
+    apply: (chronicle) => ({ ...chronicle, contentVersion: "stale-content-version" }),
+  },
+];
 
 describe("MUTATION SURVIVAL GATE", () => {
   it("proves the baseline campaign is semantically healthy", () => {
     expect(semanticOracle(buildCompletedCampaign())).toBe(true);
   });
 
-  it("kills every deliberate semantic mutant", () => {
-    const baseline = buildCompletedCampaign();
-    const mutations: MutationId[] = [
-      "duplicate-event-id",
-      "break-current-location",
-      "erase-active-knowledge",
-      "suppress-completion-event",
-      "reopen-final-question",
-      "drop-memory-comparison-evidence",
-    ];
+  it("keeps at least one deliberate mutant for every critical domain", () => {
+    const covered = new Set(mutations.map((mutation) => mutation.domain));
+    expect([...requiredDomains].filter((domain) => !covered.has(domain))).toEqual([]);
+  });
 
+  it("kills every deliberate semantic mutant in the coverage matrix", () => {
+    const baseline = buildCompletedCampaign();
     for (const mutation of mutations) {
-      expect(semanticOracle(mutate(baseline, mutation)), `mutation survived: ${mutation}`).toBe(false);
+      expect(
+        semanticOracle(mutation.apply(baseline)),
+        `mutation survived: domain=${mutation.domain} id=${mutation.id}`,
+      ).toBe(false);
     }
   });
 
