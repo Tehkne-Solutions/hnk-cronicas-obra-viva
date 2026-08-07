@@ -62,7 +62,7 @@ export function recordTestimony(
     value: spoken.proposition.value,
     status: "reported",
     createdAt: at,
-    assertedBy: { id: spoken.speakerId, kind: "character" },
+    assertedBy: { id: spoken.speakerId, kind: "character" as const },
     sourceRefs: [evidenceId as string],
   });
 
@@ -70,7 +70,7 @@ export function recordTestimony(
     id: evidenceId,
     kind: "testimony",
     producedAt: at,
-    sourceRef: { id: spoken.speakerId, kind: "character" },
+    sourceRef: { id: spoken.speakerId, kind: "character" as const },
     supports: [claimId],
     contradicts: [],
     payload: Object.freeze({
