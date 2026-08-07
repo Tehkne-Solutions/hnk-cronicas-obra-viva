@@ -1,0 +1,22 @@
+{
+  "name": "@hnk/telemetry-control",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "tsx src/server.ts",
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run",
+    "start": "node dist/apps/telemetry-control/src/server.js"
+  },
+  "dependencies": {
+    "@hnk/telemetry-control-core": "workspace:*",
+    "@hnk/telemetry-engine": "workspace:*",
+    "pg": "^8.16.3"
+  },
+  "devDependencies": {
+    "@types/pg": "^8.15.5",
+    "tsx": "^4.20.5"
+  }
+}
