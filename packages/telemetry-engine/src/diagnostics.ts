@@ -5,8 +5,8 @@ export interface TelemetryFinding {
   readonly level: Exclude<TelemetryLevel, "debug" | "info">;
   readonly summary: string;
   readonly evidenceCount: number;
-  readonly sessionId?: string;
-  readonly chronicleId?: string;
+  readonly sessionId?: string | undefined;
+  readonly chronicleId?: string | undefined;
 }
 
 function numberData(event: TelemetryEnvelope, key: string): number | undefined {
