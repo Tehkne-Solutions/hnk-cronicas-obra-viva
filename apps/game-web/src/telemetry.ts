@@ -8,6 +8,7 @@ import {
   type TelemetryEnvelope,
   type TelemetrySink,
 } from "@hnk/telemetry-engine";
+import { analyzeTelemetry } from "@hnk/telemetry-engine/diagnostics";
 
 const BUFFER_KEY = "hnk.telemetry.buffer.v1";
 const SESSION_KEY = "hnk.telemetry.session.v1";
@@ -55,6 +56,14 @@ export class BrowserTelemetrySink implements TelemetrySink {
     if (this.queue.length >= 10) void this.flush();
   }
 
+  private payload(batch: readonly TelemetryEnvelope[]) {
+    return {
+      schemaVersion: 1 as const,
+      events: batch,
+      diagnostics: analyzeTelemetry(this.queue),
+    };
+  }
+
   async flush(): Promise<void> {
     if (this.flushing || this.queue.length === 0 || !this.endpoint) return;
     this.flushing = true;
@@ -63,7 +72,7 @@ export class BrowserTelemetrySink implements TelemetrySink {
       const response = await fetch(this.endpoint, {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ schemaVersion: 1, events: batch }),
+        body: JSON.stringify(this.payload(batch)),
         keepalive: true,
       });
       if (!response.ok) return;
@@ -79,14 +88,20 @@ export class BrowserTelemetrySink implements TelemetrySink {
   flushBeacon(): void {
     if (!this.endpoint || this.queue.length === 0 || typeof navigator === "undefined" || !("sendBeacon" in navigator)) return;
     const batch = this.queue.slice(0, 50);
-    const sent = navigator.sendBeacon(this.endpoint, new Blob([JSON.stringify({ schemaVersion: 1, events: batch })], { type: "application/json" }));
+    const sent = navigator.sendBeacon(this.endpoint, new Blob([JSON.stringify(this.payload(batch))], { type: "application/json" }));
     if (sent) {
       this.queue.splice(0, batch.length);
       writeBuffer(this.queue);
     }
   }
 
-  snapshot(): readonly TelemetryEnvelope[] { return Object.freeze([...this.queue]); }
+  snapshot() {
+    return Object.freeze({
+      events: Object.freeze([...this.queue]),
+      diagnostics: analyzeTelemetry(this.queue),
+      endpointConfigured: Boolean(this.endpoint),
+    });
+  }
 }
 
 export const telemetrySessionId = makeSessionId();
@@ -116,6 +131,8 @@ export function reportDuration(metric: string, startedAt: number, threshold?: nu
     threshold,
   }));
 }
+
+export function getObservabilitySnapshot() { return browserTelemetry.snapshot(); }
 
 export function installGlobalObservability(): () => void {
   reportTelemetry("session_started", {
