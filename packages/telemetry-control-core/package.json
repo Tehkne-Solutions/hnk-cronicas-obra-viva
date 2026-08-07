@@ -1,0 +1,15 @@
+{
+  "name": "@hnk/telemetry-control-core",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "exports": { ".": "./src/index.ts" },
+  "scripts": {
+    "build": "tsc -p tsconfig.json --noEmit",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@hnk/telemetry-engine": "workspace:*"
+  }
+}
