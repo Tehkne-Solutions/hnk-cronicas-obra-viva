@@ -33,6 +33,10 @@ export interface QualityRunSnapshot {
   readonly typecheckMs: number | null;
   readonly testMs: number | null;
   readonly buildMs: number | null;
+  readonly regressionBudgetStatus: "pass" | "warn" | "fail" | "no_baseline" | "unknown";
+  readonly regressionViolations: number;
+  readonly regressionWarnings: number;
+  readonly baselineSha: string | null;
 }
 
 export interface ControlCenterSnapshot {
@@ -61,6 +65,9 @@ export interface ControlCenterSnapshot {
     readonly runs: number;
     readonly passed: number;
     readonly failed: number;
+    readonly budgetPassed: number;
+    readonly budgetWarnings: number;
+    readonly budgetFailed: number;
     readonly latest: QualityRunSnapshot | null;
   };
   readonly topErrors: readonly { readonly name: string; readonly source: string; readonly count: number }[];
@@ -79,6 +86,10 @@ function numberData(event: StoredTelemetryEvent, key: string): number | undefine
   const value = event.data[key];
   return typeof value === "number" ? value : undefined;
 }
+function stringData(event: StoredTelemetryEvent, key: string): string | undefined {
+  const value = event.data[key];
+  return typeof value === "string" ? value : undefined;
+}
 function qualityDuration(event: StoredTelemetryEvent, gate: string): number | null {
   const gates = event.data.gates;
   if (!gates || typeof gates !== "object") return null;
@@ -89,6 +100,8 @@ function qualityDuration(event: StoredTelemetryEvent, gate: string): number | nu
 }
 function qualityRun(event: StoredTelemetryEvent): QualityRunSnapshot {
   const result = event.data.result === "pass" || event.data.result === "fail" ? event.data.result : "unknown";
+  const budget = stringData(event, "regressionBudgetStatus");
+  const regressionBudgetStatus = budget === "pass" || budget === "warn" || budget === "fail" || budget === "no_baseline" ? budget : "unknown";
   return Object.freeze({
     result,
     buildSha: event.buildSha ?? null,
@@ -101,6 +114,10 @@ function qualityRun(event: StoredTelemetryEvent): QualityRunSnapshot {
     typecheckMs: qualityDuration(event, "typecheck"),
     testMs: qualityDuration(event, "test"),
     buildMs: qualityDuration(event, "build"),
+    regressionBudgetStatus,
+    regressionViolations: numberData(event, "regressionViolations") ?? 0,
+    regressionWarnings: numberData(event, "regressionWarnings") ?? 0,
+    baselineSha: stringData(event, "baselineSha") ?? null,
   });
 }
 
@@ -155,6 +172,9 @@ export function buildControlCenterSnapshot(events: readonly StoredTelemetryEvent
       runs: qualityEvents.length,
       passed: qualityEvents.filter((event) => event.data.result === "pass").length,
       failed: qualityEvents.filter((event) => event.data.result === "fail").length,
+      budgetPassed: qualityEvents.filter((event) => event.data.regressionBudgetStatus === "pass").length,
+      budgetWarnings: qualityEvents.filter((event) => event.data.regressionBudgetStatus === "warn").length,
+      budgetFailed: qualityEvents.filter((event) => event.data.regressionBudgetStatus === "fail").length,
       latest: qualityEvents[0] ? qualityRun(qualityEvents[0]) : null,
     }),
     topErrors: Object.freeze(topErrors),
