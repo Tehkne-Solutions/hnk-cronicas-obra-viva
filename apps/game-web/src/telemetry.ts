@@ -48,6 +48,8 @@ export class BrowserTelemetrySink implements TelemetrySink {
   private queue: TelemetryEnvelope[] = readBuffer();
   private flushing = false;
   private readonly endpoint = env("VITE_HNK_TELEMETRY_ENDPOINT");
+  private readonly release = env("VITE_HNK_RELEASE") ?? "dev";
+  private readonly buildSha = env("VITE_HNK_BUILD_SHA") ?? "unknown";
 
   emit(event: TelemetryEnvelope): void {
     this.queue.push(event);
@@ -59,6 +61,8 @@ export class BrowserTelemetrySink implements TelemetrySink {
   private payload(batch: readonly TelemetryEnvelope[]) {
     return {
       schemaVersion: 1 as const,
+      release: this.release,
+      buildSha: this.buildSha,
       events: batch,
       diagnostics: analyzeTelemetry(this.queue),
     };
@@ -100,6 +104,8 @@ export class BrowserTelemetrySink implements TelemetrySink {
       events: Object.freeze([...this.queue]),
       diagnostics: analyzeTelemetry(this.queue),
       endpointConfigured: Boolean(this.endpoint),
+      release: this.release,
+      buildSha: this.buildSha,
     });
   }
 }
