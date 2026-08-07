@@ -74,6 +74,10 @@ export function buildControlCenterSnapshot(events: readonly StoredTelemetryEvent
   const diagnostics = [...new Set(events.map((event) => event.sessionId))].flatMap((sessionId) =>
     analyzeTelemetry(events.filter((event) => event.sessionId === sessionId)),
   );
+  const topErrors = [...errorsByKey.values()]
+    .sort((a, b) => b.count - a.count)
+    .slice(0, 10)
+    .map((item) => Object.freeze({ name: item.name, source: item.source, count: item.count }));
   return Object.freeze({
     generatedAt: new Date().toISOString(),
     periodHours,
@@ -96,7 +100,7 @@ export function buildControlCenterSnapshot(events: readonly StoredTelemetryEvent
       combustionStarted: events.filter((event) => event.name === "CombustionStarted").length,
       foliosRecovered: events.filter((event) => event.name === "TransferBox7Opened").length,
     }),
-    topErrors: Object.freeze([...errorsByKey.values()].sort((a, b) => b.count - a.count).slice(0, 10).map(Object.freeze)),
+    topErrors: Object.freeze(topErrors),
     diagnostics: Object.freeze(diagnostics),
     recentEvents: Object.freeze([...events].sort((a, b) => b.receivedAt.localeCompare(a.receivedAt)).slice(0, 100)),
   });
