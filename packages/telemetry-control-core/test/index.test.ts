@@ -7,12 +7,12 @@ function event(partial: Partial<StoredTelemetryEvent> & Pick<StoredTelemetryEven
     id: partial.id ?? `event.${Math.random()}`,
     occurredAt: partial.occurredAt ?? "2026-08-07T12:00:00.000Z",
     receivedAt: partial.receivedAt ?? "2026-08-07T12:00:01.000Z",
-    kind: partial.kind,
-    name: partial.name,
     level: partial.level ?? "info",
     sessionId: partial.sessionId ?? "session.a",
     data: partial.data ?? {},
     ...partial,
+    kind: partial.kind,
+    name: partial.name,
   };
 }
 
