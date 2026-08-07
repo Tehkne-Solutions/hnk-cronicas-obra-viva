@@ -1,5 +1,5 @@
 import { Pool } from "pg";
-import type { StoredTelemetryEvent, TelemetryStore } from "@hnk/telemetry-control-core";
+import type { StoredTelemetryEvent, TelemetryRecentOptions, TelemetryStore } from "@hnk/telemetry-control-core";
 
 const SCHEMA = `
 CREATE TABLE IF NOT EXISTS hnk_telemetry_events (
@@ -64,11 +64,15 @@ export class PostgresTelemetryStore implements TelemetryStore {
     }
   }
 
-  async recent(options: { limit?: number; since?: Date } = {}): Promise<readonly StoredTelemetryEvent[]> {
+  async recent(options: TelemetryRecentOptions = {}): Promise<readonly StoredTelemetryEvent[]> {
     await this.initialize();
     const limit = Math.min(20_000, Math.max(1, options.limit ?? 5000));
     const since = options.since ?? new Date(0);
-    const result = await this.pool.query(`SELECT * FROM hnk_telemetry_events WHERE received_at >= $1 ORDER BY received_at DESC LIMIT $2`, [since.toISOString(), limit]);
+    const values: unknown[] = [since.toISOString()];
+    let where = "received_at >= $1";
+    if (options.sessionId) { values.push(options.sessionId); where += ` AND session_id = $${values.length}`; }
+    values.push(limit);
+    const result = await this.pool.query(`SELECT * FROM hnk_telemetry_events WHERE ${where} ORDER BY received_at DESC LIMIT $${values.length}`, values);
     return result.rows.map((row) => Object.freeze({
       schemaVersion: 1 as const,
       id: String(row.id),

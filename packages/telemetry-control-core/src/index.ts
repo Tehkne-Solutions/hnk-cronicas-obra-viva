@@ -8,9 +8,15 @@ export interface StoredTelemetryEvent extends TelemetryEnvelope {
   readonly buildSha?: string;
 }
 
+export interface TelemetryRecentOptions {
+  readonly limit?: number;
+  readonly since?: Date;
+  readonly sessionId?: string;
+}
+
 export interface TelemetryStore {
   append(events: readonly StoredTelemetryEvent[]): Promise<void>;
-  recent(options?: { limit?: number; since?: Date }): Promise<readonly StoredTelemetryEvent[]>;
+  recent(options?: TelemetryRecentOptions): Promise<readonly StoredTelemetryEvent[]>;
   prune(before: Date): Promise<number>;
   health(): Promise<{ readonly mode: string; readonly ok: boolean }>;
 }
@@ -109,9 +115,11 @@ export function buildControlCenterSnapshot(events: readonly StoredTelemetryEvent
 export class MemoryTelemetryStore implements TelemetryStore {
   private events: StoredTelemetryEvent[] = [];
   async append(events: readonly StoredTelemetryEvent[]): Promise<void> { this.events.push(...events); }
-  async recent(options: { limit?: number; since?: Date } = {}): Promise<readonly StoredTelemetryEvent[]> {
+  async recent(options: TelemetryRecentOptions = {}): Promise<readonly StoredTelemetryEvent[]> {
     const sinceMs = options.since?.getTime() ?? 0;
-    return this.events.filter((event) => Date.parse(event.receivedAt) >= sinceMs).slice(-(options.limit ?? 5000));
+    return this.events
+      .filter((event) => Date.parse(event.receivedAt) >= sinceMs && (!options.sessionId || event.sessionId === options.sessionId))
+      .slice(-(options.limit ?? 5000));
   }
   async prune(before: Date): Promise<number> {
     const previous = this.events.length;

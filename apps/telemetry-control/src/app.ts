@@ -2,6 +2,7 @@ import { createServer, type IncomingMessage, type ServerResponse } from "node:ht
 import { timingSafeEqual } from "node:crypto";
 import { buildControlCenterSnapshot, type StoredTelemetryEvent, type TelemetryStore } from "@hnk/telemetry-control-core";
 import type { TelemetryEnvelope } from "@hnk/telemetry-engine";
+import type { TelemetryAlertManager } from "./alerting.js";
 import { renderDashboard } from "./dashboard.js";
 
 export interface ControlCenterConfig {
@@ -12,6 +13,7 @@ export interface ControlCenterConfig {
   readonly release: string;
   readonly buildSha: string;
   readonly rateLimitPerMinute: number;
+  readonly alertManager?: TelemetryAlertManager;
 }
 
 const MAX_BODY_BYTES = 512 * 1024;
@@ -61,6 +63,7 @@ export function createControlCenterServer(config: ControlCenterConfig) {
           const receivedAt = new Date().toISOString(); const release = typeof value.release === "string" ? value.release.slice(0, 80) : undefined; const buildSha = typeof value.buildSha === "string" ? value.buildSha.slice(0, 80) : undefined;
           const events: StoredTelemetryEvent[] = rawEvents.map((event) => Object.freeze({ ...(event as TelemetryEnvelope), receivedAt, ...(release ? { release } : {}), ...(buildSha ? { buildSha } : {}) }));
           await config.store.append(events);
+          if (config.alertManager) void config.alertManager.inspectSessions(events.map((event) => event.sessionId)).catch((error) => console.error("telemetry alert dispatch failed", error));
           if (Math.random() < 0.02) await config.store.prune(new Date(Date.now() - config.retentionDays * 86_400_000));
           json(res, 202, { ok: true, accepted: events.length }); return;
         } catch (error) { const message = error instanceof Error ? error.message : "ingest_failed"; json(res, message === "payload_too_large" ? 413 : 400, { ok: false, error: message }); return; }
