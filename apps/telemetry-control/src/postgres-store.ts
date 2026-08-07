@@ -15,7 +15,6 @@ CREATE TABLE IF NOT EXISTS hnk_telemetry_events (
   world_day integer,
   world_minute integer,
   data jsonb NOT NULL DEFAULT '{}'::jsonb,
-  remote_address text,
   release text,
   build_sha text
 );
@@ -48,12 +47,12 @@ export class PostgresTelemetryStore implements TelemetryStore {
       for (const event of events) {
         await client.query(
           `INSERT INTO hnk_telemetry_events
-          (id, received_at, occurred_at, kind, name, level, session_id, chronicle_id, location_id, world_day, world_minute, data, remote_address, release, build_sha)
-          VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12::jsonb,$13,$14,$15)
+          (id, received_at, occurred_at, kind, name, level, session_id, chronicle_id, location_id, world_day, world_minute, data, release, build_sha)
+          VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12::jsonb,$13,$14)
           ON CONFLICT (id) DO NOTHING`,
           [event.id, event.receivedAt, event.occurredAt, event.kind, event.name, event.level, event.sessionId,
             event.chronicleId ?? null, event.locationId ?? null, event.worldDay ?? null, event.worldMinute ?? null,
-            JSON.stringify(event.data), event.remoteAddress ?? null, event.release ?? null, event.buildSha ?? null],
+            JSON.stringify(event.data), event.release ?? null, event.buildSha ?? null],
         );
       }
       await client.query("COMMIT");
@@ -84,7 +83,6 @@ export class PostgresTelemetryStore implements TelemetryStore {
       ...(row.world_day !== null ? { worldDay: Number(row.world_day) } : {}),
       ...(row.world_minute !== null ? { worldMinute: Number(row.world_minute) } : {}),
       data: Object.freeze((row.data ?? {}) as Record<string, unknown>),
-      ...(row.remote_address ? { remoteAddress: String(row.remote_address) } : {}),
       ...(row.release ? { release: String(row.release) } : {}),
       ...(row.build_sha ? { buildSha: String(row.build_sha) } : {}),
     } as StoredTelemetryEvent));
