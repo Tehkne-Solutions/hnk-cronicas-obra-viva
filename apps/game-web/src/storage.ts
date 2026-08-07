@@ -1,5 +1,6 @@
 import type { ChronicleSaveV2 } from "@hnk/save-contract/v2";
 import { assertChronicleSaveV2 } from "@hnk/save-contract/v2";
+import { reportDuration, reportError, reportTelemetry } from "./telemetry.js";
 
 const DB_NAME = "hnk-cronicas-obra-viva";
 const DB_VERSION = 1;
@@ -27,47 +28,67 @@ function openDb(): Promise<IDBDatabase> {
 }
 
 export async function saveChronicleToBrowser(save: ChronicleSaveV2): Promise<void> {
-  const db = await openDb();
+  const startedAt = performance.now();
+  let db: IDBDatabase | undefined;
   try {
+    db = await openDb();
     await new Promise<void>((resolve, reject) => {
-      const tx = db.transaction(STORE, "readwrite");
+      const tx = db!.transaction(STORE, "readwrite");
       tx.onerror = () => reject(tx.error ?? new Error("Failed to save Chronicle."));
       tx.oncomplete = () => resolve();
       tx.objectStore(STORE).put(structuredClone(save), save.chronicleId as string);
     });
+    reportDuration("indexeddb_save", startedAt, 250);
+  } catch (error) {
+    reportError(error, "indexeddb.save");
+    throw error;
   } finally {
-    db.close();
+    db?.close();
   }
 }
 
 export async function loadChronicleFromBrowser(id: string): Promise<ChronicleSaveV2 | null> {
-  const db = await openDb();
+  const startedAt = performance.now();
+  let db: IDBDatabase | undefined;
   try {
+    db = await openDb();
     const value = await new Promise<unknown>((resolve, reject) => {
-      const tx = db.transaction(STORE, "readonly");
+      const tx = db!.transaction(STORE, "readonly");
       tx.onerror = () => reject(tx.error ?? new Error("Failed to load Chronicle."));
       const request = tx.objectStore(STORE).get(id);
       request.onerror = () => reject(request.error ?? new Error("Failed to load Chronicle."));
       request.onsuccess = () => resolve(request.result);
     });
-    if (value === undefined) return null;
+    reportDuration("indexeddb_load", startedAt, 200);
+    if (value === undefined) {
+      reportTelemetry("chronicle_load_miss", { chronicleId: id }, "warn");
+      return null;
+    }
     assertChronicleSaveV2(value);
+    reportTelemetry("chronicle_loaded", { eventCount: value.eventLedger.length, contentVersion: value.contentVersion });
     return value;
+  } catch (error) {
+    reportError(error, "indexeddb.load");
+    throw error;
   } finally {
-    db.close();
+    db?.close();
   }
 }
 
 export async function listChroniclesFromBrowser(): Promise<readonly ChronicleBrowserSummary[]> {
-  const db = await openDb();
+  const startedAt = performance.now();
+  let db: IDBDatabase | undefined;
   try {
+    db = await openDb();
     const values = await new Promise<unknown[]>((resolve, reject) => {
-      const tx = db.transaction(STORE, "readonly");
+      const tx = db!.transaction(STORE, "readonly");
       tx.onerror = () => reject(tx.error ?? new Error("Failed to list Chronicles."));
       const request = tx.objectStore(STORE).getAll();
       request.onerror = () => reject(request.error ?? new Error("Failed to list Chronicles."));
       request.onsuccess = () => resolve(request.result as unknown[]);
     });
+    reportDuration("indexeddb_list", startedAt, 200);
+    reportTelemetry("chronicle_listed", { count: values.length });
     return values.map((value) => {
       assertChronicleSaveV2(value);
       const persona = value.personas[value.activePersonaId as string];
@@ -80,21 +101,31 @@ export async function listChroniclesFromBrowser(): Promise<readonly ChronicleBro
         contentVersion: value.contentVersion,
       });
     });
+  } catch (error) {
+    reportError(error, "indexeddb.list");
+    throw error;
   } finally {
-    db.close();
+    db?.close();
   }
 }
 
 export async function deleteChronicleFromBrowser(id: string): Promise<void> {
-  const db = await openDb();
+  const startedAt = performance.now();
+  let db: IDBDatabase | undefined;
   try {
+    db = await openDb();
     await new Promise<void>((resolve, reject) => {
-      const tx = db.transaction(STORE, "readwrite");
+      const tx = db!.transaction(STORE, "readwrite");
       tx.onerror = () => reject(tx.error ?? new Error("Failed to delete Chronicle."));
       tx.oncomplete = () => resolve();
       tx.objectStore(STORE).delete(id);
     });
+    reportDuration("indexeddb_delete", startedAt, 200);
+    reportTelemetry("chronicle_deleted", { chronicleId: id });
+  } catch (error) {
+    reportError(error, "indexeddb.delete");
+    throw error;
   } finally {
-    db.close();
+    db?.close();
   }
 }
