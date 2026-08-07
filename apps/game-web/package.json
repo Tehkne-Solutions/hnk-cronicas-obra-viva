@@ -15,6 +15,7 @@
     "@hnk/aurea-routines": "workspace:*",
     "@hnk/aurea-scene": "workspace:*",
     "@hnk/domain": "workspace:*",
+    "@hnk/knowledge-engine": "workspace:*",
     "@hnk/liber-engine": "workspace:*",
     "@hnk/narrative-engine": "workspace:*",
     "@hnk/relationes-engine": "workspace:*",
