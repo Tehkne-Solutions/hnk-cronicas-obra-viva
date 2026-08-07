@@ -12,7 +12,6 @@ CREATE TABLE IF NOT EXISTS hnk_telemetry_events (
   world_day integer,
   world_minute integer,
   data jsonb NOT NULL DEFAULT '{}'::jsonb,
-  remote_address text,
   release text,
   build_sha text
 );
