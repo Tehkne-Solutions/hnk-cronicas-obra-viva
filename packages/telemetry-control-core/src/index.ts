@@ -21,6 +21,20 @@ export interface TelemetryStore {
   health(): Promise<{ readonly mode: string; readonly ok: boolean }>;
 }
 
+export interface QualityRunSnapshot {
+  readonly result: "pass" | "fail" | "unknown";
+  readonly buildSha: string | null;
+  readonly receivedAt: string;
+  readonly campaignScenarios: number;
+  readonly autonomousSeeds: number;
+  readonly semanticMutants: number;
+  readonly mutationDomains: number;
+  readonly protectedMilestones: number;
+  readonly typecheckMs: number | null;
+  readonly testMs: number | null;
+  readonly buildMs: number | null;
+}
+
 export interface ControlCenterSnapshot {
   readonly generatedAt: string;
   readonly periodHours: number;
@@ -43,6 +57,12 @@ export interface ControlCenterSnapshot {
     readonly combustionStarted: number;
     readonly foliosRecovered: number;
   };
+  readonly quality: {
+    readonly runs: number;
+    readonly passed: number;
+    readonly failed: number;
+    readonly latest: QualityRunSnapshot | null;
+  };
   readonly topErrors: readonly { readonly name: string; readonly source: string; readonly count: number }[];
   readonly diagnostics: readonly TelemetryFinding[];
   readonly recentEvents: readonly StoredTelemetryEvent[];
@@ -59,11 +79,36 @@ function numberData(event: StoredTelemetryEvent, key: string): number | undefine
   const value = event.data[key];
   return typeof value === "number" ? value : undefined;
 }
+function qualityDuration(event: StoredTelemetryEvent, gate: string): number | null {
+  const gates = event.data.gates;
+  if (!gates || typeof gates !== "object") return null;
+  const value = (gates as Record<string, unknown>)[gate];
+  if (!value || typeof value !== "object") return null;
+  const duration = (value as Record<string, unknown>).durationMs;
+  return typeof duration === "number" ? duration : null;
+}
+function qualityRun(event: StoredTelemetryEvent): QualityRunSnapshot {
+  const result = event.data.result === "pass" || event.data.result === "fail" ? event.data.result : "unknown";
+  return Object.freeze({
+    result,
+    buildSha: event.buildSha ?? null,
+    receivedAt: event.receivedAt,
+    campaignScenarios: numberData(event, "campaignScenarios") ?? 0,
+    autonomousSeeds: numberData(event, "autonomousSeeds") ?? 0,
+    semanticMutants: numberData(event, "semanticMutants") ?? 0,
+    mutationDomains: numberData(event, "mutationDomains") ?? 0,
+    protectedMilestones: numberData(event, "protectedMilestones") ?? 0,
+    typecheckMs: qualityDuration(event, "typecheck"),
+    testMs: qualityDuration(event, "test"),
+    buildMs: qualityDuration(event, "build"),
+  });
+}
 
 export function buildControlCenterSnapshot(events: readonly StoredTelemetryEvent[], periodHours = 24): ControlCenterSnapshot {
   const sessions = new Set(events.map((event) => event.sessionId));
   const chronicles = new Set(events.flatMap((event) => event.chronicleId ? [event.chronicleId] : []));
   const errors = events.filter((event) => event.kind === "error");
+  const qualityEvents = events.filter((event) => event.name === "ci_quality_report").sort((a, b) => b.receivedAt.localeCompare(a.receivedAt));
   const persistence = events.filter((event) => event.kind === "performance" && event.name.startsWith("indexeddb_"));
   const persistenceValues = persistence.flatMap((event) => {
     const value = numberData(event, "value");
@@ -105,6 +150,12 @@ export function buildControlCenterSnapshot(events: readonly StoredTelemetryEvent
       threeWitnessesCompleted: events.filter((event) => event.name === "ThreeWitnessesUnderstood").length,
       combustionStarted: events.filter((event) => event.name === "CombustionStarted").length,
       foliosRecovered: events.filter((event) => event.name === "TransferBox7Opened").length,
+    }),
+    quality: Object.freeze({
+      runs: qualityEvents.length,
+      passed: qualityEvents.filter((event) => event.data.result === "pass").length,
+      failed: qualityEvents.filter((event) => event.data.result === "fail").length,
+      latest: qualityEvents[0] ? qualityRun(qualityEvents[0]) : null,
     }),
     topErrors: Object.freeze(topErrors),
     diagnostics: Object.freeze(diagnostics),
