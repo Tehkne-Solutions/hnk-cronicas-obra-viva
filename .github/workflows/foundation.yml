@@ -8,6 +8,9 @@ on:
 jobs:
   validate:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: read
     env:
       HNK_TELEMETRY_BASE_URL: ${{ secrets.HNK_TELEMETRY_BASE_URL }}
     steps:
@@ -19,6 +22,22 @@ jobs:
         with:
           node-version: 22
       - run: pnpm install --frozen-lockfile=false
+      - name: Fetch latest green quality baseline from main
+        id: baseline
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p artifacts/baseline
+          run_id=$(gh run list --workflow foundation.yml --branch main --status success --limit 1 --json databaseId --jq '.[0].databaseId // empty')
+          if [ -n "$run_id" ]; then
+            gh run download "$run_id" --pattern 'ci-quality-report-*' --dir artifacts/baseline || true
+            baseline=$(find artifacts/baseline -name ci-quality-report.json -type f | head -n 1)
+            if [ -n "$baseline" ]; then
+              echo "path=$baseline" >> "$GITHUB_OUTPUT"
+              echo "Using quality baseline from main run $run_id: $baseline"
+            fi
+          fi
       - name: Typecheck
         id: typecheck
         shell: bash
@@ -52,9 +71,10 @@ jobs:
           end=$(date +%s%3N)
           echo "duration_ms=$((end-start))" >> "$GITHUB_OUTPUT"
           exit $result
-      - name: Generate CI quality telemetry
+      - name: Generate CI quality telemetry and enforce regression budget
         if: always()
         env:
+          HNK_QUALITY_BASELINE_PATH: ${{ steps.baseline.outputs.path }}
           HNK_TYPECHECK_STATUS: ${{ steps.typecheck.outcome }}
           HNK_TYPECHECK_MS: ${{ steps.typecheck.outputs.duration_ms }}
           HNK_TEST_STATUS: ${{ steps.test.outcome }}
