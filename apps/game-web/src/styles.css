@@ -15,6 +15,7 @@ h1 { margin: 4px 0 0; font-size: clamp(26px, 4vw, 44px); font-weight: 500; }
 .narrative > p:not(.location) { font-size: clamp(20px, 2.6vw, 29px); line-height: 1.55; max-width: 720px; }
 .actions, .routes { display: flex; flex-direction: column; gap: 10px; }
 .actions { align-items: flex-start; margin-top: 36px; }
+.route-list { display: flex; flex-direction: column; gap: 10px; margin-top: 8px; }
 button { border: 1px solid #745b39; background: transparent; color: #392b1a; padding: 11px 15px; cursor: pointer; text-align: left; }
 button:hover, button:focus-visible { background: #c8ad7c55; outline: 2px solid #7e5d30; outline-offset: 2px; }
 .ignis-action { background: #3d3022; color: #f3e5c8; border-color: #8b6a3d; min-width: 260px; }
