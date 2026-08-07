@@ -37,7 +37,11 @@ describe("telemetry control center", () => {
           autonomousSeeds: 12,
           semanticMutants: 15,
           mutationDomains: 8,
-          protectedMilestones: 11,
+          protectedMilestones: 13,
+          regressionBudgetStatus: "pass",
+          regressionViolations: 0,
+          regressionWarnings: 0,
+          baselineSha: "base123",
           gates: {
             typecheck: { status: "success", durationMs: 1000 },
             test: { status: "success", durationMs: 2200 },
@@ -52,20 +56,28 @@ describe("telemetry control center", () => {
     expect(snapshot.topErrors[0]?.source).toBe("window.error");
     expect(snapshot.quality.runs).toBe(1);
     expect(snapshot.quality.passed).toBe(1);
+    expect(snapshot.quality.budgetPassed).toBe(1);
     expect(snapshot.quality.latest?.semanticMutants).toBe(15);
     expect(snapshot.quality.latest?.mutationDomains).toBe(8);
     expect(snapshot.quality.latest?.testMs).toBe(2200);
+    expect(snapshot.quality.latest?.regressionBudgetStatus).toBe("pass");
+    expect(snapshot.quality.latest?.baselineSha).toBe("base123");
   });
 
-  it("counts failing CI reports separately", () => {
+  it("counts failing CI reports and regression budgets separately", () => {
     const snapshot = buildControlCenterSnapshot([
-      event({ kind: "health", name: "ci_quality_report", data: { result: "pass" }, receivedAt: "2026-08-07T12:00:00.000Z" }),
-      event({ kind: "anomaly", name: "ci_quality_report", level: "error", data: { result: "fail" }, receivedAt: "2026-08-07T13:00:00.000Z" }),
+      event({ kind: "health", name: "ci_quality_report", data: { result: "pass", regressionBudgetStatus: "pass" }, receivedAt: "2026-08-07T12:00:00.000Z" }),
+      event({ kind: "health", name: "ci_quality_report", level: "warn", data: { result: "pass", regressionBudgetStatus: "warn", regressionWarnings: 1 }, receivedAt: "2026-08-07T12:30:00.000Z" }),
+      event({ kind: "anomaly", name: "ci_quality_report", level: "error", data: { result: "fail", regressionBudgetStatus: "fail", regressionViolations: 2 }, receivedAt: "2026-08-07T13:00:00.000Z" }),
     ]);
-    expect(snapshot.quality.runs).toBe(2);
-    expect(snapshot.quality.passed).toBe(1);
+    expect(snapshot.quality.runs).toBe(3);
+    expect(snapshot.quality.passed).toBe(2);
     expect(snapshot.quality.failed).toBe(1);
+    expect(snapshot.quality.budgetPassed).toBe(1);
+    expect(snapshot.quality.budgetWarnings).toBe(1);
+    expect(snapshot.quality.budgetFailed).toBe(1);
     expect(snapshot.quality.latest?.result).toBe("fail");
+    expect(snapshot.quality.latest?.regressionViolations).toBe(2);
   });
 
   it("keeps memory storage bounded by retention operations", async () => {
