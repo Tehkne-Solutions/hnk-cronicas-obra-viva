@@ -1,0 +1,27 @@
+name: telemetry-production-smoke
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "17 */6 * * *"
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    env:
+      HNK_TELEMETRY_BASE_URL: ${{ secrets.HNK_TELEMETRY_BASE_URL }}
+      HNK_TELEMETRY_ADMIN_TOKEN: ${{ secrets.HNK_TELEMETRY_ADMIN_TOKEN }}
+      HNK_TELEMETRY_GAME_ORIGIN: ${{ secrets.HNK_TELEMETRY_GAME_ORIGIN }}
+      HNK_RELEASE: production-smoke
+      HNK_BUILD_SHA: ${{ github.sha }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Skip until production secrets exist
+        if: ${{ env.HNK_TELEMETRY_BASE_URL == '' || env.HNK_TELEMETRY_ADMIN_TOKEN == '' }}
+        run: echo "Telemetry production smoke is not activated yet; configure repository secrets first."
+      - name: Run production smoke
+        if: ${{ env.HNK_TELEMETRY_BASE_URL != '' && env.HNK_TELEMETRY_ADMIN_TOKEN != '' }}
+        run: node apps/telemetry-control/scripts/production-smoke.mjs
