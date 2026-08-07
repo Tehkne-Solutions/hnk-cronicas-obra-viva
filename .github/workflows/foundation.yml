@@ -23,6 +23,7 @@ jobs:
         id: typecheck
         shell: bash
         run: |
+          set +e
           start=$(date +%s%3N)
           pnpm typecheck
           result=$?
@@ -33,6 +34,7 @@ jobs:
         id: test
         shell: bash
         run: |
+          set +e
           start=$(date +%s%3N)
           pnpm test
           result=$?
@@ -43,6 +45,7 @@ jobs:
         id: build
         shell: bash
         run: |
+          set +e
           start=$(date +%s%3N)
           pnpm build
           result=$?
