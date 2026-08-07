@@ -110,25 +110,38 @@ let latestChronicle: ChronicleSaveV2 | undefined;
 
 export function observeChronicle(previous: ChronicleSaveV2 | null | undefined, current: ChronicleSaveV2): void {
   latestChronicle = current;
-  emitAll(browserTelemetry, observeChronicleTransition({ sessionId: telemetrySessionId, previous, current }));
+  emitAll(browserTelemetry, observeChronicleTransition({ sessionId: telemetrySessionId, previous: previous ?? null, current }));
 }
 
 export function reportTelemetry(name: string, data: Record<string, unknown> = {}, level: "debug" | "info" | "warn" | "error" = "info"): void {
-  browserTelemetry.emit(createTelemetryEvent({ sessionId: telemetrySessionId, chronicle: latestChronicle, kind: "health", name, level, data }));
+  browserTelemetry.emit(createTelemetryEvent({
+    sessionId: telemetrySessionId,
+    ...(latestChronicle ? { chronicle: latestChronicle } : {}),
+    kind: "health",
+    name,
+    level,
+    data,
+  }));
 }
 
 export function reportError(error: unknown, source: string, fatal = false): void {
-  browserTelemetry.emit(createErrorTelemetry({ sessionId: telemetrySessionId, chronicle: latestChronicle, error, source, fatal }));
+  browserTelemetry.emit(createErrorTelemetry({
+    sessionId: telemetrySessionId,
+    ...(latestChronicle ? { chronicle: latestChronicle } : {}),
+    error,
+    source,
+    fatal,
+  }));
 }
 
 export function reportDuration(metric: string, startedAt: number, threshold?: number): void {
   browserTelemetry.emit(createPerformanceTelemetry({
     sessionId: telemetrySessionId,
-    chronicle: latestChronicle,
+    ...(latestChronicle ? { chronicle: latestChronicle } : {}),
     metric,
     value: Math.max(0, performance.now() - startedAt),
     unit: "ms",
-    threshold,
+    ...(threshold !== undefined ? { threshold } : {}),
   }));
 }
 
@@ -138,6 +151,8 @@ export function installGlobalObservability(): () => void {
   reportTelemetry("session_started", {
     userAgentFamily: typeof navigator !== "undefined" ? navigator.userAgent.split(" ").slice(0, 3).join(" ") : "unknown",
     online: typeof navigator !== "undefined" ? navigator.onLine : true,
+    buildSha: env("VITE_HNK_BUILD_SHA") ?? "unknown",
+    release: env("VITE_HNK_RELEASE") ?? "dev",
   });
 
   const onError = (event: ErrorEvent) => reportError(event.error ?? event.message, "window.error", true);
@@ -161,7 +176,14 @@ export function installGlobalObservability(): () => void {
       performanceObserver = new PerformanceObserver((list) => {
         for (const entry of list.getEntries()) {
           if (entry.entryType === "longtask") {
-            browserTelemetry.emit(createPerformanceTelemetry({ sessionId: telemetrySessionId, chronicle: latestChronicle, metric: "browser_long_task", value: entry.duration, unit: "ms", threshold: 100 }));
+            browserTelemetry.emit(createPerformanceTelemetry({
+              sessionId: telemetrySessionId,
+              ...(latestChronicle ? { chronicle: latestChronicle } : {}),
+              metric: "browser_long_task",
+              value: entry.duration,
+              unit: "ms",
+              threshold: 100,
+            }));
           }
         }
       });
