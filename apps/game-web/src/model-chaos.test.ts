@@ -6,11 +6,12 @@ import {
   type LocationId,
   type PersonaId,
 } from "@hnk/domain";
+import { createTelemetryEvent } from "@hnk/telemetry-engine";
 import type { ChronicleSaveV2 } from "@hnk/save-contract/v2";
 import { applyProloguePath } from "./prologue.js";
 import { applyIgnisAction } from "./ignis.js";
 import { projectPlayableLoop } from "./playable-loop.js";
-import { createTelemetryClient } from "./telemetry.js";
+import { BrowserTelemetrySink } from "./telemetry.js";
 import {
   deleteChronicleFromBrowser,
   loadChronicleFromBrowser,
@@ -107,23 +108,26 @@ describe("MODEL BASED CHAOS GATE", () => {
     await deleteChronicleFromBrowser("chronicle.chaos");
   });
 
-  it("never lets telemetry transport failure break gameplay", async () => {
+  it("never lets telemetry transport failure break gameplay and preserves the buffered event", async () => {
     const originalFetch = globalThis.fetch;
     globalThis.fetch = vi.fn(async () => { throw new Error("network_down"); }) as typeof fetch;
     try {
-      const client = createTelemetryClient({
-        endpoint: "https://telemetry.invalid/v1/telemetry",
-        release: "chaos-test",
-        buildSha: "deadbeef",
-        flushIntervalMs: 1,
+      const sink = new BrowserTelemetrySink();
+      Object.defineProperty(sink, "endpoint", { configurable: true, value: "https://telemetry.invalid/v1/telemetry" });
+      const event = createTelemetryEvent({
+        sessionId: "session.chaos",
+        kind: "session",
+        name: "chaos_transport_test",
+        level: "info",
+        data: {},
       });
-      expect(() => client.capture({ kind: "session", name: "chaos_transport_test", level: "info", data: {} })).not.toThrow();
-      await expect(client.flush()).resolves.toBeUndefined();
+      expect(() => sink.emit(event)).not.toThrow();
+      await expect(sink.flush()).resolves.toBeUndefined();
+      expect(sink.snapshot().events.some((item) => item.name === "chaos_transport_test")).toBe(true);
 
       let chronicle = applyProloguePath(freshChronicle(), "discernimentum");
       chronicle = applyIgnisAction(chronicle, "add_oil");
       assertChronicleHealthy(chronicle);
-      client.stop();
     } finally {
       globalThis.fetch = originalFetch;
     }
