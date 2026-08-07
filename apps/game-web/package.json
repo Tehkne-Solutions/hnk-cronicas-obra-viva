@@ -21,6 +21,7 @@
     "@hnk/relationes-engine": "workspace:*",
     "@hnk/save-contract": "workspace:*",
     "@hnk/scriptum-engine": "workspace:*",
+    "@hnk/telemetry-engine": "workspace:*",
     "@hnk/testimonia-engine": "workspace:*",
     "@hnk/world-engine": "workspace:*",
     "react": "^19.1.1",
