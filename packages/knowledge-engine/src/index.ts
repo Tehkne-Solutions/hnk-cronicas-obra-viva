@@ -84,3 +84,10 @@ export function updateQuestionStatus(
     }),
   });
 }
+
+export {
+  assessClaim,
+  compareClaimValues,
+  evidenceKindsForClaim,
+  type ClaimAssessment,
+} from "./corroboration.js";
