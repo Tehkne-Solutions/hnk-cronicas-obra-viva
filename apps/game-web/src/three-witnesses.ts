@@ -57,7 +57,11 @@ export function projectThreeWitnesses(chronicle: ChronicleSaveV2): ThreeWitnesse
   const atMaterialSite = persona.currentLocation === officina || persona.currentLocation === archivum;
   const canInspectMatter = !matter && atMaterialSite && hasEvent(chronicle, "TransferBox7Opened");
   const canCompareWord = !word && persona.currentLocation === typographia && typographiaOpen(chronicle) && hasEvent(chronicle, "RecoveredFolioRead") && hasEvent(chronicle, "MissingFolioLedgerChecked");
-  const canHearMemory = !memory && persona.currentLocation === forum && memoryWindowOpen(chronicle) && hasEvent(chronicle, "MiriamIgnisTestimonyReceived");
+  const canHearMemory = !memory
+    && persona.currentLocation === forum
+    && memoryWindowOpen(chronicle)
+    && hasEvent(chronicle, "MiriamIgnisTestimonyReceived")
+    && hasEvent(chronicle, "MemoryWitnessesCompared");
   if (canInspectMatter) availableActions.push("inspect_matter");
   if (canCompareWord) availableActions.push("compare_word");
   if (canHearMemory) availableActions.push("hear_memory");
@@ -70,8 +74,10 @@ export function projectThreeWitnesses(chronicle: ChronicleSaveV2): ThreeWitnesse
     text = "A comparação documental depende da Typographia aberta. Entre 09:00 e 15:00, matrizes, registros e impressos podem ser confrontados com o fólio.";
   } else if (persona.currentLocation === forum && !memory && !memoryWindowOpen(chronicle)) {
     text = "A memória social tem seu próprio tempo. Entre 13:00 e 17:00, carregadores, escribas e passantes se cruzam no Forum e versões do acontecimento podem ser ouvidas.";
+  } else if (persona.currentLocation === forum && !memory && !hasEvent(chronicle, "MemoryWitnessesCompared")) {
+    text = "A família Memória ainda não pode ser integrada: primeiro compare Tomas e Beatrice e descubra se suas versões são realmente independentes.";
   } else if (count === 0) {
-    text = "O fólio fala em três testemunhas. A Matéria deve ser examinada na Officina ou no Archivum; a Palavra exige comparação na Typographia; a Memória precisa ser recolhida no Forum.";
+    text = "O fólio fala em três testemunhas. A Matéria deve ser examinada na Officina ou no Archivum; a Palavra exige comparação na Typographia; a Memória precisa ser recolhida e comparada no Forum.";
   } else {
     text = `Você reuniu ${count} de 3 famílias. Falta buscar as demais no lugar e no momento em que realmente existem.`;
   }
@@ -117,11 +123,11 @@ export function applyThreeWitnessAction(chronicle: ChronicleSaveV2, action: Thre
     return addFamilyEvidence(chronicle, Object.freeze({ id: claimId, subjectId: questionId as never, predicate: "witness_family", value: "word", status: "supported", createdAt: chronicle.world.timestamp, sourceRefs: [evidenceId as string] }), Object.freeze({ id: evidenceId, kind: "document", producedAt: chronicle.world.timestamp, supports: [claimId], contradicts: [], payload: Object.freeze({ locationId: typographia, sources: ["folio text", "transfer ledger", "marginalia", "typographia impressions"] }) }), "ThreeWitnessWordCompared");
   }
   const claimId = "claim.folio.witness-memory" as ClaimId; const evidenceId = "evidence.folio.witness-memory" as EvidenceId;
-  return addFamilyEvidence(chronicle, Object.freeze({ id: claimId, subjectId: questionId as never, predicate: "witness_family", value: "memory", status: "reported", createdAt: chronicle.world.timestamp, sourceRefs: [evidenceId as string] }), Object.freeze({ id: evidenceId, kind: "testimony", producedAt: chronicle.world.timestamp, supports: [claimId], contradicts: [], payload: Object.freeze({ locationId: forum, witnesses: ["Miriam", "Forum carriers"], caveat: "memory can be incomplete or distorted" }) }), "ThreeWitnessMemoryHeard");
+  return addFamilyEvidence(chronicle, Object.freeze({ id: claimId, subjectId: questionId as never, predicate: "witness_family", value: "memory", status: "reported", createdAt: chronicle.world.timestamp, sourceRefs: [evidenceId as string] }), Object.freeze({ id: evidenceId, kind: "testimony", producedAt: chronicle.world.timestamp, supports: [claimId], contradicts: [], payload: Object.freeze({ locationId: forum, witnesses: ["Tomas", "Beatrice"], caveat: "memory family integrated only after source-independence comparison" }) }), "ThreeWitnessMemoryHeard");
 }
 
 export const THREE_WITNESS_ACTION_LABEL: Readonly<Record<ThreeWitnessAction, string>> = Object.freeze({
   inspect_matter: "Examinar vestígios materiais",
   compare_word: "Comparar fólio, ledger e impressos",
-  hear_memory: "Recolher memórias no Forum",
+  hear_memory: "Integrar a memória após comparar as fontes",
 });
