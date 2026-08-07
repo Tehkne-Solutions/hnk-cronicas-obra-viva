@@ -70,6 +70,16 @@ interface Candidate {
   readonly apply: (chronicle: ChronicleSaveV2) => ChronicleSaveV2;
 }
 
+function actionableIds(chronicle: ChronicleSaveV2): string[] {
+  const result: string[] = [];
+  for (const action of projectIgnis(chronicle).availableActions) result.push(`ignis:${action}`);
+  for (const action of projectIgnisInvestigation(chronicle).availableActions) result.push(`investigation:${action}`);
+  if (integrateAnsweredIgnisQuaestio(chronicle) !== chronicle) result.push("consequence:integrate");
+  if (projectMiriamIgnisConversation(chronicle).available) result.push("miriam:first");
+  for (const action of projectPlayableLoop(chronicle).actions) result.push(`loop:${action.id}`);
+  return result;
+}
+
 function candidates(chronicle: ChronicleSaveV2): Candidate[] {
   const result: Candidate[] = [];
   const hasPrologue = chronicle.eventLedger.some((event) => event.type === "ProloguePathChosen");
@@ -173,7 +183,7 @@ function isComplete(chronicle: ChronicleSaveV2): boolean {
 
 function utilityBonus(candidateId: string): number {
   if (candidateId.startsWith("travel:")) return 0;
-  if (candidateId.startsWith("wait:")) return 2;
+  if (candidateId.startsWith("wait:")) return -5;
   return 15;
 }
 
@@ -181,6 +191,7 @@ function runExplorer(seed: number) {
   let chronicle = freshChronicle(seed);
   const random = rng(seed);
   const visited = new Set<string>(stateSignature(chronicle));
+  const executed = new Set<string>();
   const trace: string[] = [];
 
   for (let step = 0; step < 120 && !isComplete(chronicle); step += 1) {
@@ -190,11 +201,12 @@ function runExplorer(seed: number) {
         if (next === chronicle || !healthy(next)) return null;
         const signatures = stateSignature(next);
         const novelty = signatures.filter((signature) => !visited.has(signature)).length;
+        const pendingOpportunities = actionableIds(next).filter((id) => !executed.has(id)).length;
         const terminalBonus = isComplete(next) ? 1000 : 0;
         return {
           candidate,
           next,
-          score: terminalBonus + novelty * 20 + utilityBonus(candidate.id) + random(),
+          score: terminalBonus + novelty * 20 + pendingOpportunities * 25 + utilityBonus(candidate.id) + random(),
         };
       })
       .filter((entry): entry is NonNullable<typeof entry> => entry !== null)
@@ -204,6 +216,9 @@ function runExplorer(seed: number) {
     const selected = options[0]!;
     chronicle = selected.next;
     trace.push(selected.candidate.id);
+    if (!selected.candidate.id.startsWith("travel:") && !selected.candidate.id.startsWith("wait:")) {
+      executed.add(selected.candidate.id);
+    }
     for (const signature of stateSignature(chronicle)) visited.add(signature);
   }
 
