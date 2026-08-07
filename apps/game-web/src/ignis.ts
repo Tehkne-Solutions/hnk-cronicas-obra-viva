@@ -199,20 +199,26 @@ export function applyIgnisAction(chronicle: ChronicleSaveV2, action: IgnisAction
   let lamp = latestLampState(chronicle);
 
   if (action === "add_oil") {
+    if (lamp.reservoirMaterialId) return chronicle;
     const result = resolveOperation({ at: chronicle.world.timestamp, operation: "add", actorId: personaId, targetId: lampId, material: { id: "ignis.oleum" as EntityId, materialId: "oleum", quantity: 1, state: {} } });
     return result.events.some((event) => event.type === "MaterialAdded") ? append(chronicle, "IgnisOilAdded", { material: "oleum" }) : chronicle;
   }
-  if (action === "place_wick") return append(chronicle, "IgnisWickPlaced", { material: "linum" });
+  if (action === "place_wick") {
+    if (lamp.wickMaterialId) return chronicle;
+    return append(chronicle, "IgnisWickPlaced", { material: "linum" });
+  }
   if (action === "wait_wick") {
-    lamp = advanceWickSaturation({ ...lamp, reservoirMaterialId: "oleum", wickMaterialId: "linum" }, 5);
+    if (lamp.reservoirMaterialId !== "oleum" || lamp.wickMaterialId !== "linum" || lamp.wickSaturation === "saturated") return chronicle;
+    lamp = advanceWickSaturation(lamp, 5);
     if (lamp.wickSaturation !== "saturated") return chronicle;
     return append(chronicle, "IgnisWickSaturated", { minutes: 5 });
   }
 
+  if (lamp.ignitionState === "burning" || lamp.wickSaturation !== "saturated") return chronicle;
   const spark = resolveOperation({ at: chronicle.world.timestamp, operation: "strike", actorId: personaId, targetId: "ignis.silex" as EntityId, instrumentId: "ignis.ferrum" as EntityId, targetMaterialId: "silex", instrumentMaterialId: "ferrum" });
   if (!spark.events.some((event) => event.type === "SparkProduced")) return chronicle;
   const combustion = resolveLampCombustion({ sparkApplied: true, state: lamp });
-  if (!combustion.events.some((event) => event.type === "CombustionStarted")) return append(chronicle, "CombustionNotSustained", { reason: combustion.events[0]?.type ?? "unknown" });
+  if (!combustion.events.some((event) => event.type === "CombustionStarted")) return chronicle;
   const world = applyWorldLightEvents(chronicle.world, deriveLightEvents({ combustion, sourceId: lampId, locationId: officina }));
   return append(Object.freeze({ ...chronicle, world }), "CombustionStarted", { lampId });
 }
