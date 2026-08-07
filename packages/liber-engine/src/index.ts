@@ -28,7 +28,7 @@ export interface LiberState {
 
 export function createLiberState(): LiberState {
   return Object.freeze({
-    sections: Object.freeze(["diarium", "materia", "quaestiones", "experimenta"]),
+    sections: Object.freeze(["diarium", "materia", "quaestiones", "experimenta"] as const),
     diarium: Object.freeze([]),
     materiaNodeIds: Object.freeze([]),
     questionIds: Object.freeze([]),
