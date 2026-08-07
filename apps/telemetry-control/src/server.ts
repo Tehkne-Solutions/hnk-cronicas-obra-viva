@@ -5,8 +5,8 @@ import { PostgresTelemetryStore } from "./postgres-store.js";
 
 const PORT = Number(process.env.PORT ?? 8787);
 const DATABASE_URL = process.env.DATABASE_URL;
-const RELEASE = process.env.HNK_RELEASE ?? "dev";
-const BUILD_SHA = process.env.HNK_BUILD_SHA ?? "unknown";
+const RELEASE = process.env.HNK_RELEASE ?? process.env.RENDER_SERVICE_NAME ?? "dev";
+const BUILD_SHA = process.env.HNK_BUILD_SHA ?? process.env.RENDER_GIT_COMMIT ?? "unknown";
 const store = DATABASE_URL
   ? new PostgresTelemetryStore(DATABASE_URL, process.env.HNK_TELEMETRY_DB_SSL === "true")
   : new MemoryTelemetryStore();
