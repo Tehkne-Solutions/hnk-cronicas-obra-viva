@@ -7,13 +7,22 @@ on:
         description: "Commit SHA to evaluate (blank = current ref)"
         required: false
         type: string
+  workflow_run:
+    workflows: [foundation]
+    types: [completed]
+    branches: [main]
 
 permissions:
   actions: read
   contents: read
 
+concurrency:
+  group: quality-release-gate-${{ github.event.workflow_run.head_sha || inputs.candidate_sha || github.sha }}
+  cancel-in-progress: true
+
 jobs:
   evaluate:
+    if: ${{ github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success' }}
     runs-on: ubuntu-latest
     env:
       GH_TOKEN: ${{ github.token }}
@@ -21,24 +30,25 @@ jobs:
       HNK_TELEMETRY_ADMIN_TOKEN: ${{ secrets.HNK_TELEMETRY_ADMIN_TOKEN }}
       HNK_TELEMETRY_GAME_ORIGIN: ${{ secrets.HNK_TELEMETRY_GAME_ORIGIN }}
     steps:
-      - uses: actions/checkout@v4
-        with:
-          ref: ${{ inputs.candidate_sha != '' && inputs.candidate_sha || github.sha }}
-
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-
       - name: Resolve candidate
         id: candidate
         shell: bash
         run: |
-          sha="${{ inputs.candidate_sha }}"
-          if [ -z "$sha" ]; then sha="$(git rev-parse HEAD)"; fi
+          sha="${{ github.event.workflow_run.head_sha }}"
+          if [ -z "$sha" ]; then sha="${{ inputs.candidate_sha }}"; fi
+          if [ -z "$sha" ]; then sha="${{ github.sha }}"; fi
           echo "sha=$sha" >> "$GITHUB_OUTPUT"
           echo "HNK_CANDIDATE_SHA=$sha" >> "$GITHUB_ENV"
           echo "HNK_BUILD_SHA=$sha" >> "$GITHUB_ENV"
           echo "HNK_RELEASE=quality-release-gate" >> "$GITHUB_ENV"
+
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ steps.candidate.outputs.sha }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
 
       - name: Fetch successful foundation quality report for candidate
         shell: bash
