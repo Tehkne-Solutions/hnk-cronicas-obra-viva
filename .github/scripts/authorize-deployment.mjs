@@ -105,7 +105,7 @@ const authorization = {
   authorizationId: `deploy-auth.${candidate?.candidateSha?.slice(0, 12) ?? "unknown"}.${now.getTime()}`,
   authorized,
   decision: authorized ? "authorized" : "rejected",
-  candidateId: candidate?.candidateId ?? requestedCandidateId || null,
+  candidateId: candidate?.candidateId ?? (requestedCandidateId || null),
   candidateSha: candidate?.candidateSha ?? null,
   currentMainSha: currentMainSha || null,
   environment,
