@@ -39,6 +39,16 @@ export interface QualityRunSnapshot {
   readonly baselineSha: string | null;
 }
 
+export interface ReleaseDecisionSnapshot {
+  readonly decision: "eligible" | "blocked" | "unknown";
+  readonly candidateSha: string | null;
+  readonly receivedAt: string;
+  readonly reasons: readonly string[];
+  readonly productionErrors: number;
+  readonly productionFatal: number;
+  readonly diagnostics: number;
+}
+
 export interface ControlCenterSnapshot {
   readonly generatedAt: string;
   readonly periodHours: number;
@@ -70,6 +80,13 @@ export interface ControlCenterSnapshot {
     readonly budgetFailed: number;
     readonly latest: QualityRunSnapshot | null;
   };
+  readonly releaseReadiness: {
+    readonly decisions: number;
+    readonly eligible: number;
+    readonly blocked: number;
+    readonly latest: ReleaseDecisionSnapshot | null;
+    readonly recent: readonly ReleaseDecisionSnapshot[];
+  };
   readonly topErrors: readonly { readonly name: string; readonly source: string; readonly count: number }[];
   readonly diagnostics: readonly TelemetryFinding[];
   readonly recentEvents: readonly StoredTelemetryEvent[];
@@ -89,6 +106,10 @@ function numberData(event: StoredTelemetryEvent, key: string): number | undefine
 function stringData(event: StoredTelemetryEvent, key: string): string | undefined {
   const value = event.data[key];
   return typeof value === "string" ? value : undefined;
+}
+function stringArrayData(event: StoredTelemetryEvent, key: string): readonly string[] {
+  const value = event.data[key];
+  return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : [];
 }
 function qualityDuration(event: StoredTelemetryEvent, gate: string): number | null {
   const gates = event.data.gates;
@@ -120,12 +141,27 @@ function qualityRun(event: StoredTelemetryEvent): QualityRunSnapshot {
     baselineSha: stringData(event, "baselineSha") ?? null,
   });
 }
+function releaseDecision(event: StoredTelemetryEvent): ReleaseDecisionSnapshot {
+  const raw = stringData(event, "decision");
+  const decision = raw === "eligible" || raw === "blocked" ? raw : "unknown";
+  return Object.freeze({
+    decision,
+    candidateSha: stringData(event, "candidateSha") ?? event.buildSha ?? null,
+    receivedAt: event.receivedAt,
+    reasons: Object.freeze([...stringArrayData(event, "reasons")]),
+    productionErrors: numberData(event, "productionErrors") ?? 0,
+    productionFatal: numberData(event, "productionFatal") ?? 0,
+    diagnostics: numberData(event, "diagnostics") ?? 0,
+  });
+}
 
 export function buildControlCenterSnapshot(events: readonly StoredTelemetryEvent[], periodHours = 24): ControlCenterSnapshot {
   const sessions = new Set(events.map((event) => event.sessionId));
   const chronicles = new Set(events.flatMap((event) => event.chronicleId ? [event.chronicleId] : []));
   const errors = events.filter((event) => event.kind === "error");
   const qualityEvents = events.filter((event) => event.name === "ci_quality_report").sort((a, b) => b.receivedAt.localeCompare(a.receivedAt));
+  const releaseEvents = events.filter((event) => event.name === "release_gate_decision").sort((a, b) => b.receivedAt.localeCompare(a.receivedAt));
+  const releaseDecisions = releaseEvents.map(releaseDecision);
   const persistence = events.filter((event) => event.kind === "performance" && event.name.startsWith("indexeddb_"));
   const persistenceValues = persistence.flatMap((event) => {
     const value = numberData(event, "value");
@@ -176,6 +212,13 @@ export function buildControlCenterSnapshot(events: readonly StoredTelemetryEvent
       budgetWarnings: qualityEvents.filter((event) => event.data.regressionBudgetStatus === "warn").length,
       budgetFailed: qualityEvents.filter((event) => event.data.regressionBudgetStatus === "fail").length,
       latest: qualityEvents[0] ? qualityRun(qualityEvents[0]) : null,
+    }),
+    releaseReadiness: Object.freeze({
+      decisions: releaseDecisions.length,
+      eligible: releaseDecisions.filter((item) => item.decision === "eligible").length,
+      blocked: releaseDecisions.filter((item) => item.decision === "blocked").length,
+      latest: releaseDecisions[0] ?? null,
+      recent: Object.freeze(releaseDecisions.slice(0, 10)),
     }),
     topErrors: Object.freeze(topErrors),
     diagnostics: Object.freeze(diagnostics),
