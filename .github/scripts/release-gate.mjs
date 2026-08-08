@@ -8,6 +8,8 @@ const adminToken = process.env.HNK_TELEMETRY_ADMIN_TOKEN ?? "";
 const qualityPath = resolve(root, process.env.HNK_QUALITY_REPORT_PATH ?? "artifacts/candidate-quality/ci-quality-report.json");
 const smokePath = resolve(root, process.env.HNK_SMOKE_REPORT_PATH ?? "artifacts/release-smoke.json");
 const outDir = resolve(root, "artifacts");
+const ttlHoursRaw = Number(process.env.HNK_RELEASE_CANDIDATE_TTL_HOURS ?? 24);
+const ttlHours = Number.isFinite(ttlHoursRaw) && ttlHoursRaw > 0 ? ttlHoursRaw : 24;
 
 const reasons = [];
 const warnings = [];
@@ -86,6 +88,34 @@ const report = {
 
 await mkdir(outDir, { recursive: true });
 await writeFile(resolve(outDir, "release-gate-report.json"), `${JSON.stringify(report, null, 2)}\n`);
+
+let releaseCandidate = null;
+if (eligible) {
+  const expiresAt = new Date(now.getTime() + ttlHours * 60 * 60 * 1000).toISOString();
+  releaseCandidate = {
+    schemaVersion: 1,
+    candidateId: `rc.${candidateSha.slice(0, 12)}.${now.getTime()}`,
+    candidateSha,
+    createdAt: now.toISOString(),
+    expiresAt,
+    ttlHours,
+    immutable: true,
+    evidence: {
+      qualityReportSha: quality?.sha ?? null,
+      qualityRunId: quality?.runId ?? null,
+      regressionBudget: quality?.regressionBudget?.status ?? "unknown",
+      qualityBaselineSha: quality?.regressionBudget?.baseline?.sha ?? null,
+      productionSmokeSessionId: smoke?.smokeSessionId ?? null,
+      productionSmokeDiagnostic: smoke?.diagnostic ?? null,
+      controlCenterStorage: health?.storage ?? null,
+      criticalDiagnostics: criticalFindings.length,
+      recentProductionFatals: productionFatals.length,
+    },
+    signature: "Tehkné Solutions",
+  };
+  await writeFile(resolve(outDir, "release-candidate.json"), `${JSON.stringify(releaseCandidate, null, 2)}\n`);
+}
+
 const md = [
   "# HENUVOKODAN Quality Release Gate",
   "",
@@ -97,6 +127,7 @@ const md = [
   `- Control Center: **${report.signals.controlCenter}** (${report.signals.storage})`,
   `- Critical diagnostics (6h): **${report.signals.criticalDiagnostics}**`,
   `- Production fatals (recent): **${report.signals.recentProductionFatals}**`,
+  releaseCandidate ? `- Release Candidate: **${releaseCandidate.candidateId}** · válido até ${releaseCandidate.expiresAt}` : "- Release Candidate: **não emitido**",
   "",
   reasons.length ? `## Blocking reasons\n${reasons.map((item) => `- ${item}`).join("\n")}` : "## Blocking reasons\n- none",
   warnings.length ? `\n## Warnings\n${warnings.map((item) => `- ${item}`).join("\n")}` : "",
@@ -107,7 +138,7 @@ await writeFile(resolve(outDir, "release-gate-report.md"), `${md}\n`);
 if (process.env.GITHUB_STEP_SUMMARY) await writeFile(process.env.GITHUB_STEP_SUMMARY, `${md}\n`, { flag: "a" });
 
 if (baseUrl) {
-  const event = {
+  const events = [{
     schemaVersion: 1,
     id: `release-gate.${candidateSha}.${Date.now()}`,
     occurredAt: report.generatedAt,
@@ -127,15 +158,35 @@ if (baseUrl) {
       criticalDiagnostics: report.signals.criticalDiagnostics,
       recentProductionFatals: report.signals.recentProductionFatals,
     },
-  };
+  }];
+  if (releaseCandidate) {
+    events.push({
+      schemaVersion: 1,
+      id: `release-candidate.${releaseCandidate.candidateId}`,
+      occurredAt: releaseCandidate.createdAt,
+      kind: "health",
+      name: "release_candidate_registered",
+      level: "info",
+      sessionId: `release.${candidateSha.slice(0, 12)}`,
+      data: {
+        candidateId: releaseCandidate.candidateId,
+        candidateSha,
+        createdAt: releaseCandidate.createdAt,
+        expiresAt: releaseCandidate.expiresAt,
+        ttlHours,
+        regressionBudget: releaseCandidate.evidence.regressionBudget,
+        qualityBaselineSha: releaseCandidate.evidence.qualityBaselineSha,
+      },
+    });
+  }
   try {
     await fetch(`${baseUrl}/v1/telemetry`, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ release: "quality-release-gate", buildSha: candidateSha, events: [event] }),
+      body: JSON.stringify({ release: "quality-release-gate", buildSha: candidateSha, events }),
     });
   } catch (error) {
-    console.warn("release gate decision telemetry publish failed", error instanceof Error ? error.message : error);
+    console.warn("release gate telemetry publish failed", error instanceof Error ? error.message : error);
   }
 }
 
