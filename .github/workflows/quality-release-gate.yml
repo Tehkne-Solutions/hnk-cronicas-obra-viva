@@ -29,6 +29,7 @@ jobs:
       HNK_TELEMETRY_BASE_URL: ${{ secrets.HNK_TELEMETRY_BASE_URL }}
       HNK_TELEMETRY_ADMIN_TOKEN: ${{ secrets.HNK_TELEMETRY_ADMIN_TOKEN }}
       HNK_TELEMETRY_GAME_ORIGIN: ${{ secrets.HNK_TELEMETRY_GAME_ORIGIN }}
+      HNK_RELEASE_CANDIDATE_TTL_HOURS: 24
     steps:
       - name: Resolve candidate
         id: candidate
@@ -100,5 +101,6 @@ jobs:
             artifacts/release-smoke.json
             artifacts/release-gate-report.json
             artifacts/release-gate-report.md
+            artifacts/release-candidate.json
           if-no-files-found: warn
           retention-days: 30
