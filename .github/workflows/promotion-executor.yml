@@ -1,0 +1,91 @@
+name: promotion-executor
+
+on:
+  workflow_dispatch:
+    inputs:
+      authorization_id:
+        description: "Deployment Authorization ID"
+        required: true
+        type: string
+      candidate_id:
+        description: "Immutable Release Candidate ID"
+        required: true
+        type: string
+
+permissions:
+  actions: read
+  contents: read
+
+concurrency:
+  group: promotion-${{ inputs.candidate_id }}
+  cancel-in-progress: false
+
+jobs:
+  promote:
+    runs-on: ubuntu-latest
+    environment: production
+    env:
+      GH_TOKEN: ${{ github.token }}
+      HNK_AUTHORIZATION_ID: ${{ inputs.authorization_id }}
+      HNK_CANDIDATE_ID: ${{ inputs.candidate_id }}
+      HNK_PROMOTION_WEBHOOK_URL: ${{ secrets.HNK_PROMOTION_WEBHOOK_URL }}
+      HNK_PROMOTION_WEBHOOK_TOKEN: ${{ secrets.HNK_PROMOTION_WEBHOOK_TOKEN }}
+      HNK_GAME_PRODUCTION_URL: ${{ secrets.HNK_GAME_PRODUCTION_URL }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Locate exact deployment authorization evidence
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts/promotion-input /tmp/hnk-promotion-search
+          found=""
+          runs=$(gh api "/repos/$GITHUB_REPOSITORY/actions/workflows/deployment-authorization.yml/runs?status=success&per_page=50" --jq '.workflow_runs[].id')
+          for run_id in $runs; do
+            artifact_id=$(gh api "/repos/$GITHUB_REPOSITORY/actions/runs/$run_id/artifacts" --jq '.artifacts | map(select(.expired == false and (.name | startswith("deployment-authorization-")))) | .[0].id // empty')
+            [ -n "$artifact_id" ] || continue
+            rm -rf /tmp/hnk-promotion-search/*
+            gh api "/repos/$GITHUB_REPOSITORY/actions/artifacts/$artifact_id/zip" > /tmp/hnk-promotion.zip || continue
+            unzip -q /tmp/hnk-promotion.zip -d /tmp/hnk-promotion-search || continue
+            auth_file=$(find /tmp/hnk-promotion-search -name deployment-authorization.json -type f | head -n1 || true)
+            [ -n "$auth_file" ] || continue
+            auth_id=$(node -e 'const fs=require("fs");const x=JSON.parse(fs.readFileSync(process.argv[1],"utf8"));process.stdout.write(x.authorizationId||"")' "$auth_file")
+            candidate_id=$(node -e 'const fs=require("fs");const x=JSON.parse(fs.readFileSync(process.argv[1],"utf8"));process.stdout.write(x.candidateId||"")' "$auth_file")
+            if [ "$auth_id" = "$HNK_AUTHORIZATION_ID" ] && [ "$candidate_id" = "$HNK_CANDIDATE_ID" ]; then
+              for name in deployment-authorization.json release-candidate.json release-gate-report.json ci-quality-report.json release-smoke.json; do
+                source_file=$(find /tmp/hnk-promotion-search -name "$name" -type f | head -n1 || true)
+                test -n "$source_file" || { echo "authorization artifact missing $name" >&2; exit 1; }
+                cp "$source_file" "artifacts/promotion-input/$name"
+              done
+              found="$run_id"
+              echo "source authorization run: $run_id"
+              break
+            fi
+          done
+          test -n "$found" || { echo "Authorization $HNK_AUTHORIZATION_ID for candidate $HNK_CANDIDATE_ID not found" >&2; exit 1; }
+
+      - name: Execute exact promotion and verify production
+        shell: bash
+        run: node .github/scripts/promote-release.mjs
+
+      - name: Upload promotion evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: promotion-${{ inputs.candidate_id }}-${{ github.run_id }}
+          path: |
+            artifacts/promotion-input/deployment-authorization.json
+            artifacts/promotion-input/release-candidate.json
+            artifacts/promotion-input/release-gate-report.json
+            artifacts/promotion-input/ci-quality-report.json
+            artifacts/promotion-input/release-smoke.json
+            artifacts/promotion-report.json
+            artifacts/promotion-report.md
+          if-no-files-found: warn
+          retention-days: 90
