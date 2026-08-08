@@ -1,0 +1,97 @@
+name: deployment-authorization
+
+on:
+  workflow_dispatch:
+    inputs:
+      candidate_id:
+        description: "Immutable Release Candidate ID"
+        required: true
+        type: string
+      reason:
+        description: "Why this candidate is being authorized for production promotion"
+        required: true
+        type: string
+
+permissions:
+  actions: read
+  contents: read
+
+concurrency:
+  group: deployment-authorization-${{ inputs.candidate_id }}
+  cancel-in-progress: false
+
+jobs:
+  authorize:
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+      HNK_CANDIDATE_ID: ${{ inputs.candidate_id }}
+      HNK_AUTHORIZATION_REASON: ${{ inputs.reason }}
+      HNK_DEPLOYMENT_ENVIRONMENT: production
+      HNK_TELEMETRY_BASE_URL: ${{ secrets.HNK_TELEMETRY_BASE_URL }}
+      HNK_TELEMETRY_ADMIN_TOKEN: ${{ secrets.HNK_TELEMETRY_ADMIN_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Resolve current main SHA
+        shell: bash
+        run: |
+          set -euo pipefail
+          sha=$(gh api "/repos/$GITHUB_REPOSITORY/commits/main" --jq '.sha')
+          test -n "$sha"
+          echo "HNK_CURRENT_MAIN_SHA=$sha" >> "$GITHUB_ENV"
+          echo "current main: $sha"
+
+      - name: Locate immutable Release Candidate evidence
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts/authorization-input /tmp/hnk-rc-search
+          found=""
+          runs=$(gh api "/repos/$GITHUB_REPOSITORY/actions/workflows/quality-release-gate.yml/runs?status=success&per_page=50" --jq '.workflow_runs[].id')
+          for run_id in $runs; do
+            artifact_id=$(gh api "/repos/$GITHUB_REPOSITORY/actions/runs/$run_id/artifacts" --jq '.artifacts | map(select(.expired == false and (.name | startswith("quality-release-gate-")))) | .[0].id // empty')
+            [ -n "$artifact_id" ] || continue
+            rm -rf /tmp/hnk-rc-search/*
+            if ! gh api "/repos/$GITHUB_REPOSITORY/actions/artifacts/$artifact_id/zip" > /tmp/hnk-rc.zip; then continue; fi
+            if ! unzip -q /tmp/hnk-rc.zip -d /tmp/hnk-rc-search; then continue; fi
+            candidate_file=$(find /tmp/hnk-rc-search -name release-candidate.json -type f | head -n1 || true)
+            [ -n "$candidate_file" ] || continue
+            candidate_id=$(node -e 'const fs=require("fs");const c=JSON.parse(fs.readFileSync(process.argv[1],"utf8"));process.stdout.write(c.candidateId||"")' "$candidate_file")
+            if [ "$candidate_id" = "$HNK_CANDIDATE_ID" ]; then
+              for name in release-candidate.json release-gate-report.json ci-quality-report.json release-smoke.json; do
+                source_file=$(find /tmp/hnk-rc-search -name "$name" -type f | head -n1 || true)
+                test -n "$source_file" || { echo "candidate artifact missing $name" >&2; exit 1; }
+                cp "$source_file" "artifacts/authorization-input/$name"
+              done
+              echo "source release gate run: $run_id"
+              found="$run_id"
+              break
+            fi
+          done
+          test -n "$found" || { echo "Release Candidate $HNK_CANDIDATE_ID not found in successful release-gate artifacts" >&2; exit 1; }
+
+      - name: Validate and authorize exact candidate
+        shell: bash
+        run: node .github/scripts/authorize-deployment.mjs
+
+      - name: Upload authorization evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: deployment-authorization-${{ inputs.candidate_id }}-${{ github.run_id }}
+          path: |
+            artifacts/authorization-input/release-candidate.json
+            artifacts/authorization-input/release-gate-report.json
+            artifacts/authorization-input/ci-quality-report.json
+            artifacts/authorization-input/release-smoke.json
+            artifacts/deployment-authorization.json
+            artifacts/deployment-authorization.md
+          if-no-files-found: warn
+          retention-days: 90
