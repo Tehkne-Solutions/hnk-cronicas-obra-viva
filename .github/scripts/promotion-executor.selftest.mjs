@@ -24,13 +24,19 @@ for (const [name, value] of [["release-candidate.json", candidate], ["release-ga
 }
 
 let productionSha = sha;
+let lastRequestedRef = null;
 const server = createServer((req, res) => {
-  if (req.url?.startsWith("/promote")) {
+  const url = new URL(req.url ?? "/", "http://127.0.0.1");
+  if (url.pathname === "/render-hook") {
+    lastRequestedRef = url.searchParams.get("ref");
+    if (req.method !== "POST") {
+      res.writeHead(405); res.end(); return;
+    }
     res.writeHead(202, { "content-type": "application/json" });
-    res.end(JSON.stringify({ accepted: true }));
+    res.end(JSON.stringify({ accepted: true, ref: lastRequestedRef }));
     return;
   }
-  if (req.url?.startsWith("/release.json")) {
+  if (url.pathname === "/release.json") {
     res.writeHead(200, { "content-type": "application/json" });
     res.end(JSON.stringify({ schemaVersion: 1, buildSha: productionSha, release: "production", signature: "Tehkné Solutions" }));
     return;
@@ -43,27 +49,29 @@ if (!address || typeof address === "string") throw new Error("server address una
 const base = `http://127.0.0.1:${address.port}`;
 
 async function run(expectSuccess) {
+  lastRequestedRef = null;
   await rm(resolve(repo, "artifacts/promotion-report.json"), { force: true });
   const code = await new Promise((resolveCode, reject) => {
     const child = spawn(process.execPath, [resolve(repo, ".github/scripts/promote-release.mjs")], {
       cwd: repo,
       stdio: "inherit",
-      env: { ...process.env, HNK_PROMOTION_INPUT_DIR: inputDir, HNK_AUTHORIZATION_ID: authorization.authorizationId, HNK_CANDIDATE_ID: candidate.candidateId, HNK_PROMOTION_WEBHOOK_URL: `${base}/promote`, HNK_GAME_PRODUCTION_URL: base, HNK_POST_DEPLOY_TIMEOUT_MS: "900", HNK_POST_DEPLOY_POLL_MS: "100" },
+      env: { ...process.env, HNK_PROMOTION_INPUT_DIR: inputDir, HNK_AUTHORIZATION_ID: authorization.authorizationId, HNK_CANDIDATE_ID: candidate.candidateId, HNK_RENDER_DEPLOY_HOOK_URL: `${base}/render-hook?key=test`, HNK_GAME_PRODUCTION_URL: base, HNK_POST_DEPLOY_TIMEOUT_MS: "900", HNK_POST_DEPLOY_POLL_MS: "100" },
     });
     child.once("error", reject);
     child.once("exit", (value) => resolveCode(value ?? 1));
   });
   if ((code === 0) !== expectSuccess) throw new Error(`unexpected executor exit ${code}`);
+  if (lastRequestedRef !== sha) throw new Error(`Render hook did not receive exact ref: ${lastRequestedRef}`);
   return JSON.parse(await readFile(resolve(repo, "artifacts/promotion-report.json"), "utf8"));
 }
 
 try {
   const passed = await run(true);
-  if (passed.status !== "completed" || passed.verifiedManifest?.buildSha !== sha) throw new Error("successful promotion was not verified");
+  if (passed.status !== "completed" || passed.provider !== "render" || passed.verifiedManifest?.buildSha !== sha) throw new Error("successful Render promotion was not verified");
   productionSha = "b".repeat(40);
   const failed = await run(false);
   if (failed.status !== "rollback_required" || !failed.failures.some((item) => item.startsWith("post_deploy_verification_failed:"))) throw new Error("wrong production SHA did not require rollback");
-  console.log("promotion executor self-test: PASS");
+  console.log("promotion executor Render self-test: PASS");
 } finally {
   await new Promise((resolveClose) => server.close(resolveClose));
   await rm(temp, { recursive: true, force: true });
