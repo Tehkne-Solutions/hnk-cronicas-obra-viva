@@ -28,8 +28,7 @@ jobs:
       GH_TOKEN: ${{ github.token }}
       HNK_AUTHORIZATION_ID: ${{ inputs.authorization_id }}
       HNK_CANDIDATE_ID: ${{ inputs.candidate_id }}
-      HNK_PROMOTION_WEBHOOK_URL: ${{ secrets.HNK_PROMOTION_WEBHOOK_URL }}
-      HNK_PROMOTION_WEBHOOK_TOKEN: ${{ secrets.HNK_PROMOTION_WEBHOOK_TOKEN }}
+      HNK_RENDER_DEPLOY_HOOK_URL: ${{ secrets.HNK_RENDER_DEPLOY_HOOK_URL }}
       HNK_GAME_PRODUCTION_URL: ${{ secrets.HNK_GAME_PRODUCTION_URL }}
     steps:
       - uses: actions/checkout@v4
@@ -70,7 +69,7 @@ jobs:
           done
           test -n "$found" || { echo "Authorization $HNK_AUTHORIZATION_ID for candidate $HNK_CANDIDATE_ID not found" >&2; exit 1; }
 
-      - name: Execute exact promotion and verify production
+      - name: Execute exact Render promotion and verify production
         shell: bash
         run: node .github/scripts/promote-release.mjs
 
