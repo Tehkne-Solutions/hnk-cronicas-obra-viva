@@ -11,8 +11,7 @@ const gate = JSON.parse(await readFile(resolve(inputDir, "release-gate-report.js
 const quality = JSON.parse(await readFile(resolve(inputDir, "ci-quality-report.json"), "utf8"));
 const smoke = JSON.parse(await readFile(resolve(inputDir, "release-smoke.json"), "utf8"));
 
-const promotionUrl = (process.env.HNK_PROMOTION_WEBHOOK_URL ?? "").trim();
-const promotionToken = process.env.HNK_PROMOTION_WEBHOOK_TOKEN ?? "";
+const renderDeployHookUrl = (process.env.HNK_RENDER_DEPLOY_HOOK_URL ?? "").trim();
 const productionUrl = (process.env.HNK_GAME_PRODUCTION_URL ?? "").replace(/\/$/, "");
 const requestedAuthorizationId = process.env.HNK_AUTHORIZATION_ID ?? "";
 const requestedCandidateId = process.env.HNK_CANDIDATE_ID ?? "";
@@ -27,7 +26,7 @@ function fingerprint(parts) {
 
 if (!requestedAuthorizationId) failures.push("authorization_id_required");
 if (!requestedCandidateId) failures.push("candidate_id_required");
-if (!promotionUrl) failures.push("promotion_webhook_not_configured");
+if (!renderDeployHookUrl) failures.push("render_deploy_hook_not_configured");
 if (!productionUrl) failures.push("production_url_not_configured");
 if (authorization.authorizationId !== requestedAuthorizationId) failures.push("authorization_id_mismatch");
 if (authorization.decision !== "authorized" || authorization.authorized !== true) failures.push("authorization_not_authorized");
@@ -41,27 +40,19 @@ if (authorization.evidenceFingerprint !== expectedFingerprint) failures.push("au
 
 let promotionResponse = null;
 let verifiedManifest = null;
+let deployHookTarget = null;
 if (failures.length === 0) {
-  const response = await fetch(promotionUrl, {
-    method: "POST",
-    headers: {
-      "content-type": "application/json",
-      ...(promotionToken ? { authorization: `Bearer ${promotionToken}` } : {}),
-    },
-    body: JSON.stringify({
-      schemaVersion: 1,
-      authorizationId: authorization.authorizationId,
-      candidateId: candidate.candidateId,
-      candidateSha: candidate.candidateSha,
-      evidenceFingerprint: expectedFingerprint,
-      environment: authorization.environment ?? "production",
-      requestedAt: now.toISOString(),
-      signature: "Tehkné Solutions",
-    }),
-  });
-  const text = await response.text();
-  try { promotionResponse = JSON.parse(text); } catch { promotionResponse = { raw: text }; }
-  if (!response.ok) failures.push(`promotion_webhook_failed:${response.status}`);
+  try {
+    const deployUrl = new URL(renderDeployHookUrl);
+    deployUrl.searchParams.set("ref", candidate.candidateSha);
+    deployHookTarget = `${deployUrl.origin}${deployUrl.pathname}?ref=${candidate.candidateSha}`;
+    const response = await fetch(deployUrl, { method: "POST" });
+    const text = await response.text();
+    try { promotionResponse = JSON.parse(text); } catch { promotionResponse = { raw: text }; }
+    if (!response.ok) failures.push(`render_deploy_hook_failed:${response.status}`);
+  } catch (error) {
+    failures.push(`render_deploy_hook_failed:${error instanceof Error ? error.message : String(error)}`);
+  }
 }
 
 if (failures.length === 0) {
@@ -94,6 +85,7 @@ const status = failures.length === 0 ? "completed" : "rollback_required";
 const report = {
   schemaVersion: 1,
   promotionId: `promotion.${candidate.candidateSha?.slice(0, 12) ?? "unknown"}.${now.getTime()}`,
+  provider: "render",
   authorizationId: authorization.authorizationId ?? null,
   candidateId: candidate.candidateId ?? null,
   candidateSha: candidate.candidateSha ?? null,
@@ -101,6 +93,7 @@ const report = {
   status,
   promotedAt: now.toISOString(),
   productionUrl: productionUrl || null,
+  deployHookTarget,
   promotionResponse,
   verifiedManifest,
   failures,
@@ -112,6 +105,7 @@ await writeFile(resolve(outDir, "promotion-report.json"), `${JSON.stringify(repo
 const md = [
   "# HENUVOKODAN Promotion Executor",
   "",
+  `- Provider: **Render**`,
   `- Status: **${status.toUpperCase()}**`,
   `- Candidate: **${candidate.candidateId ?? "—"}**`,
   `- SHA: \`${candidate.candidateSha ?? "—"}\``,
