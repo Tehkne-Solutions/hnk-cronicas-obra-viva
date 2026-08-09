@@ -27,7 +27,7 @@ describe("promotion dashboard", () => {
     ];
     const snapshot = { generatedAt: "2026-08-09T20:03:00.000Z", recentEvents } as unknown as ControlCenterSnapshot;
     const html = renderPromotionDashboard(snapshot, { release: "production", mode: "memory" });
-    expect(html).toContain("Promotion &amp; Post-Release Ledger");
+    expect(html).toContain("Promotion & Post-Release Ledger");
     expect(html).toContain("Degradada");
     expect(html).toContain("Saudáveis");
     expect(html).toContain("Runtime");
