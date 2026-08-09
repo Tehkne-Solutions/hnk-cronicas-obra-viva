@@ -1,5 +1,6 @@
 import type { TelemetryStore } from "@hnk/telemetry-control-core";
 import { analyzeTelemetry, type TelemetryFinding } from "@hnk/telemetry-engine/diagnostics";
+import { deriveActionableRegression } from "./actionable-regressions.js";
 
 export interface TelemetryAlertPayload {
   readonly source: "hnk-telemetry-control";
@@ -29,6 +30,34 @@ export class TelemetryAlertManager {
     return RANK[finding.level] >= RANK[minimum];
   }
 
+  private async dispatchActionable(events: Awaited<ReturnType<TelemetryStore["recent"]>>, sessionId: string, now: number, cooldown: number): Promise<void> {
+    if (!this.options.webhook) return;
+    const fetchImpl = this.options.fetchImpl ?? fetch;
+    for (const event of events) {
+      const actionable = deriveActionableRegression(event);
+      if (!actionable) continue;
+      const minimum = this.options.minLevel ?? "warn";
+      if (RANK[actionable.severity] < RANK[minimum]) continue;
+      const key = `${sessionId}:actionable:${actionable.promotionId ?? actionable.candidateSha ?? event.id}:${actionable.domain}`;
+      if (now - (this.lastSent.get(key) ?? 0) < cooldown) continue;
+      const response = await fetchImpl(this.options.webhook, {
+        method: "POST",
+        headers: { "content-type": "application/json", "user-agent": "Tehkne-HNK-Telemetry/1" },
+        body: JSON.stringify({
+          text: `[HENUVOKODAN][${actionable.severity.toUpperCase()}][${actionable.domain}] ${actionable.summary} Ação: ${actionable.recommendedAction}`,
+          hnk: {
+            source: "hnk-telemetry-control",
+            detectedAt: new Date(now).toISOString(),
+            release: this.options.release,
+            buildSha: actionable.candidateSha ?? this.options.buildSha,
+            actionable,
+          },
+        }),
+      });
+      if (response.ok) this.lastSent.set(key, now);
+    }
+  }
+
   async inspectSessions(sessionIds: readonly string[]): Promise<readonly TelemetryAlertPayload[]> {
     if (!this.options.webhook || sessionIds.length === 0) return [];
     const now = Date.now();
@@ -36,6 +65,7 @@ export class TelemetryAlertManager {
     const emitted: TelemetryAlertPayload[] = [];
     for (const sessionId of [...new Set(sessionIds)]) {
       const events = await this.options.store.recent({ sessionId, since: new Date(now - 30 * 60_000), limit: 1000 });
+      await this.dispatchActionable(events, sessionId, now, cooldown);
       for (const finding of analyzeTelemetry(events)) {
         if (!this.eligible(finding)) continue;
         const key = `${sessionId}:${finding.code}`;
