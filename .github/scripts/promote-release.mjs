@@ -13,6 +13,7 @@ const smoke = JSON.parse(await readFile(resolve(inputDir, "release-smoke.json"),
 
 const renderDeployHookUrl = (process.env.HNK_RENDER_DEPLOY_HOOK_URL ?? "").trim();
 const productionUrl = (process.env.HNK_GAME_PRODUCTION_URL ?? "").replace(/\/$/, "");
+const telemetryBaseUrl = (process.env.HNK_TELEMETRY_BASE_URL ?? "").replace(/\/$/, "");
 const requestedAuthorizationId = process.env.HNK_AUTHORIZATION_ID ?? "";
 const requestedCandidateId = process.env.HNK_CANDIDATE_ID ?? "";
 const now = new Date();
@@ -105,7 +106,7 @@ await writeFile(resolve(outDir, "promotion-report.json"), `${JSON.stringify(repo
 const md = [
   "# HENUVOKODAN Promotion Executor",
   "",
-  `- Provider: **Render**`,
+  "- Provider: **Render**",
   `- Status: **${status.toUpperCase()}**`,
   `- Candidate: **${candidate.candidateId ?? "—"}**`,
   `- SHA: \`${candidate.candidateSha ?? "—"}\``,
@@ -119,5 +120,39 @@ const md = [
 ].join("\n");
 await writeFile(resolve(outDir, "promotion-report.md"), `${md}\n`);
 if (process.env.GITHUB_STEP_SUMMARY) await writeFile(process.env.GITHUB_STEP_SUMMARY, `${md}\n`, { flag: "a" });
+
+if (telemetryBaseUrl) {
+  const event = {
+    schemaVersion: 1,
+    id: `promotion-outcome.${report.promotionId}`,
+    occurredAt: report.promotedAt,
+    kind: status === "completed" ? "health" : "anomaly",
+    name: status === "completed" ? "promotion_completed" : "promotion_rollback_required",
+    level: status === "completed" ? "info" : "error",
+    sessionId: `deploy.${String(candidate.candidateSha ?? "unknown").slice(0, 12)}`,
+    data: {
+      promotionId: report.promotionId,
+      provider: report.provider,
+      status,
+      authorizationId: report.authorizationId,
+      candidateId: report.candidateId,
+      candidateSha: report.candidateSha,
+      productionUrl: report.productionUrl,
+      verifiedManifestSha: verifiedManifest?.buildSha ?? null,
+      evidenceFingerprint: expectedFingerprint,
+      failures,
+    },
+  };
+  try {
+    const response = await fetch(`${telemetryBaseUrl}/v1/telemetry`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ release: "promotion-executor", buildSha: candidate.candidateSha ?? null, events: [event] }),
+    });
+    if (!response.ok) console.warn(`promotion telemetry publish returned ${response.status}`);
+  } catch (error) {
+    console.warn("promotion telemetry publish failed", error instanceof Error ? error.message : error);
+  }
+}
 
 if (failures.length > 0) process.exit(1);

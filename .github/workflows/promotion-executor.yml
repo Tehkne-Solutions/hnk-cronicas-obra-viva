@@ -30,6 +30,7 @@ jobs:
       HNK_CANDIDATE_ID: ${{ inputs.candidate_id }}
       HNK_RENDER_DEPLOY_HOOK_URL: ${{ secrets.HNK_RENDER_DEPLOY_HOOK_URL }}
       HNK_GAME_PRODUCTION_URL: ${{ secrets.HNK_GAME_PRODUCTION_URL }}
+      HNK_TELEMETRY_BASE_URL: ${{ secrets.HNK_TELEMETRY_BASE_URL }}
     steps:
       - uses: actions/checkout@v4
         with:
