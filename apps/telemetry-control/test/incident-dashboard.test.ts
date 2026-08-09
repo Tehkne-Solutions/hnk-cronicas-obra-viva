@@ -27,7 +27,7 @@ describe("incident dashboard", () => {
     const snapshot = { generatedAt: "2026-08-09T21:01:00.000Z", recentEvents } as unknown as ControlCenterSnapshot;
     const html = renderIncidentDashboard(snapshot, { mode: "memory", release: "production" });
     expect(html).toContain("Incident Ledger");
-    expect(html).toContain("Regressão conhecida");
+    expect(html).toContain("Reincidente");
     expect(html).toContain("runtime");
     expect(html).toContain("aaaaaaaa");
     expect(html).toContain("bbbbbbbb");
