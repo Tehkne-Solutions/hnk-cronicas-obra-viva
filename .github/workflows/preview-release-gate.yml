@@ -1,0 +1,92 @@
+name: preview-release-gate
+
+on:
+  workflow_dispatch:
+    inputs:
+      candidate_sha:
+        description: "Commit SHA to evaluate (blank = current main)"
+        required: false
+        type: string
+
+permissions:
+  actions: read
+  contents: read
+
+concurrency:
+  group: preview-release-gate-${{ inputs.candidate_sha || github.sha }}
+  cancel-in-progress: true
+
+jobs:
+  evaluate:
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+      HNK_TELEMETRY_BASE_URL: ${{ secrets.HNK_TELEMETRY_BASE_URL }}
+      HNK_TELEMETRY_ADMIN_TOKEN: ${{ secrets.HNK_TELEMETRY_ADMIN_TOKEN }}
+      HNK_TELEMETRY_GAME_ORIGIN: ${{ secrets.HNK_TELEMETRY_GAME_ORIGIN }}
+      HNK_RELEASE_CANDIDATE_TTL_HOURS: 6
+      HNK_RELEASE_GATE_MODE: preview
+    steps:
+      - name: Resolve candidate
+        id: candidate
+        shell: bash
+        run: |
+          sha="${{ inputs.candidate_sha }}"
+          if [ -z "$sha" ]; then
+            sha=$(gh api "/repos/$GITHUB_REPOSITORY/commits/main" --jq '.sha')
+          fi
+          test -n "$sha"
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
+          echo "HNK_CANDIDATE_SHA=$sha" >> "$GITHUB_ENV"
+          echo "HNK_BUILD_SHA=$sha" >> "$GITHUB_ENV"
+          echo "HNK_RELEASE=preview-release-gate" >> "$GITHUB_ENV"
+
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ steps.candidate.outputs.sha }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Fetch successful foundation quality report for candidate
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts/candidate-quality
+          run_id=$(gh api "/repos/$GITHUB_REPOSITORY/actions/workflows/foundation.yml/runs?head_sha=$HNK_CANDIDATE_SHA&status=success&per_page=20" --jq '.workflow_runs | map(select(.conclusion == "success")) | .[0].id // empty')
+          test -n "$run_id" || { echo "No successful foundation run for $HNK_CANDIDATE_SHA" >&2; exit 1; }
+          artifact_id=$(gh api "/repos/$GITHUB_REPOSITORY/actions/runs/$run_id/artifacts" --jq '.artifacts | map(select(.expired == false and (.name | startswith("ci-quality-report-")))) | .[0].id // empty')
+          test -n "$artifact_id" || { echo "No quality artifact for foundation run $run_id" >&2; exit 1; }
+          gh api "/repos/$GITHUB_REPOSITORY/actions/artifacts/$artifact_id/zip" > /tmp/ci-quality.zip
+          unzip -q /tmp/ci-quality.zip -d artifacts/candidate-quality
+          test -f artifacts/candidate-quality/ci-quality-report.json
+          node -e 'const fs=require("fs");const q=JSON.parse(fs.readFileSync("artifacts/candidate-quality/ci-quality-report.json","utf8"));if(q.sha!==process.env.HNK_CANDIDATE_SHA)throw new Error(`quality SHA mismatch ${q.sha}`);if(q.result!=="pass")throw new Error(`foundation result ${q.result}`);if(q.regressionBudget?.status!=="pass")throw new Error(`regression budget ${q.regressionBudget?.status}`)'
+
+      - name: Require preview telemetry configuration
+        shell: bash
+        run: |
+          test -n "$HNK_TELEMETRY_BASE_URL" || { echo "HNK_TELEMETRY_BASE_URL is required" >&2; exit 1; }
+          test -n "$HNK_TELEMETRY_ADMIN_TOKEN" || { echo "HNK_TELEMETRY_ADMIN_TOKEN is required" >&2; exit 1; }
+
+      - name: Run current telemetry smoke
+        shell: bash
+        run: node apps/telemetry-control/scripts/production-smoke.mjs > artifacts/release-smoke.json
+
+      - name: Evaluate preview eligibility
+        shell: bash
+        run: node .github/scripts/release-gate.mjs
+
+      - name: Upload preview release evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: preview-release-gate-${{ steps.candidate.outputs.sha }}-${{ github.run_id }}
+          path: |
+            artifacts/candidate-quality/ci-quality-report.json
+            artifacts/release-smoke.json
+            artifacts/release-gate-report.json
+            artifacts/release-gate-report.md
+            artifacts/release-candidate.json
+          if-no-files-found: warn
+          retention-days: 14
