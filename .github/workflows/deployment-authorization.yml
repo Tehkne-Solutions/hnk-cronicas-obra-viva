@@ -7,8 +7,16 @@ on:
         description: "Immutable Release Candidate ID"
         required: true
         type: string
+      environment:
+        description: "Candidate environment"
+        required: true
+        default: preview
+        type: choice
+        options:
+          - preview
+          - production
       reason:
-        description: "Why this candidate is being authorized for production promotion"
+        description: "Why this candidate is being authorized for promotion"
         required: true
         type: string
 
@@ -17,7 +25,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: deployment-authorization-${{ inputs.candidate_id }}
+  group: deployment-authorization-${{ inputs.environment }}-${{ inputs.candidate_id }}
   cancel-in-progress: false
 
 jobs:
@@ -27,7 +35,7 @@ jobs:
       GH_TOKEN: ${{ github.token }}
       HNK_CANDIDATE_ID: ${{ inputs.candidate_id }}
       HNK_AUTHORIZATION_REASON: ${{ inputs.reason }}
-      HNK_DEPLOYMENT_ENVIRONMENT: production
+      HNK_DEPLOYMENT_ENVIRONMENT: ${{ inputs.environment }}
       HNK_TELEMETRY_BASE_URL: ${{ secrets.HNK_TELEMETRY_BASE_URL }}
       HNK_TELEMETRY_ADMIN_TOKEN: ${{ secrets.HNK_TELEMETRY_ADMIN_TOKEN }}
     steps:
@@ -53,10 +61,17 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p artifacts/authorization-input /tmp/hnk-rc-search
+          if [ "$HNK_DEPLOYMENT_ENVIRONMENT" = "preview" ]; then
+            workflow="preview-release-gate.yml"
+            prefix="preview-release-gate-"
+          else
+            workflow="quality-release-gate.yml"
+            prefix="quality-release-gate-"
+          fi
           found=""
-          runs=$(gh api "/repos/$GITHUB_REPOSITORY/actions/workflows/quality-release-gate.yml/runs?status=success&per_page=50" --jq '.workflow_runs[].id')
+          runs=$(gh api "/repos/$GITHUB_REPOSITORY/actions/workflows/$workflow/runs?status=success&per_page=50" --jq '.workflow_runs[].id')
           for run_id in $runs; do
-            artifact_id=$(gh api "/repos/$GITHUB_REPOSITORY/actions/runs/$run_id/artifacts" --jq '.artifacts | map(select(.expired == false and (.name | startswith("quality-release-gate-")))) | .[0].id // empty')
+            artifact_id=$(gh api "/repos/$GITHUB_REPOSITORY/actions/runs/$run_id/artifacts" --jq ".artifacts | map(select(.expired == false and (.name | startswith(\"$prefix\")))) | .[0].id // empty")
             [ -n "$artifact_id" ] || continue
             rm -rf /tmp/hnk-rc-search/*
             if ! gh api "/repos/$GITHUB_REPOSITORY/actions/artifacts/$artifact_id/zip" > /tmp/hnk-rc.zip; then continue; fi
@@ -70,12 +85,12 @@ jobs:
                 test -n "$source_file" || { echo "candidate artifact missing $name" >&2; exit 1; }
                 cp "$source_file" "artifacts/authorization-input/$name"
               done
-              echo "source release gate run: $run_id"
+              echo "source $HNK_DEPLOYMENT_ENVIRONMENT release gate run: $run_id"
               found="$run_id"
               break
             fi
           done
-          test -n "$found" || { echo "Release Candidate $HNK_CANDIDATE_ID not found in successful release-gate artifacts" >&2; exit 1; }
+          test -n "$found" || { echo "Release Candidate $HNK_CANDIDATE_ID not found in $HNK_DEPLOYMENT_ENVIRONMENT release-gate artifacts" >&2; exit 1; }
 
       - name: Validate and authorize exact candidate
         shell: bash
@@ -85,7 +100,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: deployment-authorization-${{ inputs.candidate_id }}-${{ github.run_id }}
+          name: deployment-authorization-${{ inputs.environment }}-${{ inputs.candidate_id }}-${{ github.run_id }}
           path: |
             artifacts/authorization-input/release-candidate.json
             artifacts/authorization-input/release-gate-report.json
