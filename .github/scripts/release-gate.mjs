@@ -10,6 +10,7 @@ const smokePath = resolve(root, process.env.HNK_SMOKE_REPORT_PATH ?? "artifacts/
 const outDir = resolve(root, "artifacts");
 const ttlHoursRaw = Number(process.env.HNK_RELEASE_CANDIDATE_TTL_HOURS ?? 24);
 const ttlHours = Number.isFinite(ttlHoursRaw) && ttlHoursRaw > 0 ? ttlHoursRaw : 24;
+const gateMode = (process.env.HNK_RELEASE_GATE_MODE ?? "production").toLowerCase() === "preview" ? "preview" : "production";
 
 const reasons = [];
 const warnings = [];
@@ -26,7 +27,6 @@ async function jsonFetch(path, options = {}) {
 
 let quality = null;
 try { quality = JSON.parse(await readFile(qualityPath, "utf8")); } catch (error) { reasons.push(`quality_report_unavailable:${error instanceof Error ? error.message : String(error)}`); }
-
 if (quality) {
   if (quality.sha !== candidateSha) reasons.push(`quality_sha_mismatch:${quality.sha}`);
   if (quality.result !== "pass") reasons.push(`foundation_not_green:${quality.result}`);
@@ -48,7 +48,10 @@ if (!baseUrl || !adminToken) {
   try {
     health = await jsonFetch("/health");
     if (health?.ok !== true) reasons.push("control_center_health_not_ok");
-    if (health?.storage === "memory") reasons.push("control_center_not_persistent");
+    if (health?.storage === "memory") {
+      if (gateMode === "production") reasons.push("control_center_not_persistent");
+      else warnings.push("preview_storage_memory_nonpersistent");
+    }
     snapshot = await jsonFetch("/api/snapshot?hours=6", { headers: { authorization: `Bearer ${adminToken}` } });
   } catch (error) {
     reasons.push(`control_center_unreachable:${error instanceof Error ? error.message : String(error)}`);
@@ -60,7 +63,6 @@ const criticalFindings = Array.isArray(snapshot?.diagnostics)
   ? snapshot.diagnostics.filter((finding) => (finding?.level === "fatal" || finding?.level === "error") && !ignoredSession(finding?.sessionId))
   : [];
 if (criticalFindings.length > 0) reasons.push(`critical_production_diagnostics:${criticalFindings.map((item) => item.code).join(",")}`);
-
 const recentEvents = Array.isArray(snapshot?.recentEvents) ? snapshot.recentEvents : [];
 const productionFatals = recentEvents.filter((event) => event?.level === "fatal" && !ignoredSession(event?.sessionId));
 if (productionFatals.length > 0) reasons.push(`recent_production_fatals:${productionFatals.length}`);
@@ -69,6 +71,7 @@ const eligible = reasons.length === 0;
 const report = {
   schemaVersion: 1,
   generatedAt: now.toISOString(),
+  gateMode,
   candidateSha,
   eligible,
   decision: eligible ? "eligible" : "blocked",
@@ -92,10 +95,13 @@ await writeFile(resolve(outDir, "release-gate-report.json"), `${JSON.stringify(r
 let releaseCandidate = null;
 if (eligible) {
   const expiresAt = new Date(now.getTime() + ttlHours * 60 * 60 * 1000).toISOString();
+  const prefix = gateMode === "preview" ? "prc" : "rc";
   releaseCandidate = {
     schemaVersion: 1,
-    candidateId: `rc.${candidateSha.slice(0, 12)}.${now.getTime()}`,
+    candidateId: `${prefix}.${candidateSha.slice(0, 12)}.${now.getTime()}`,
     candidateSha,
+    gateMode,
+    environment: gateMode,
     createdAt: now.toISOString(),
     expiresAt,
     ttlHours,
@@ -117,16 +123,15 @@ if (eligible) {
 }
 
 const md = [
-  "# HENUVOKODAN Quality Release Gate",
+  `# HENUVOKODAN ${gateMode === "preview" ? "Preview" : "Quality"} Release Gate`,
   "",
+  `- Mode: **${gateMode.toUpperCase()}**`,
   `- Candidate: \`${candidateSha}\``,
   `- Decision: **${report.decision.toUpperCase()}**`,
   `- Foundation: **${report.signals.foundation}**`,
   `- Regression Budget: **${report.signals.regressionBudget}**`,
   `- Production Smoke: **${report.signals.productionSmoke}**`,
   `- Control Center: **${report.signals.controlCenter}** (${report.signals.storage})`,
-  `- Critical diagnostics (6h): **${report.signals.criticalDiagnostics}**`,
-  `- Production fatals (recent): **${report.signals.recentProductionFatals}**`,
   releaseCandidate ? `- Release Candidate: **${releaseCandidate.candidateId}** · válido até ${releaseCandidate.expiresAt}` : "- Release Candidate: **não emitido**",
   "",
   reasons.length ? `## Blocking reasons\n${reasons.map((item) => `- ${item}`).join("\n")}` : "## Blocking reasons\n- none",
@@ -140,50 +145,29 @@ if (process.env.GITHUB_STEP_SUMMARY) await writeFile(process.env.GITHUB_STEP_SUM
 if (baseUrl) {
   const events = [{
     schemaVersion: 1,
-    id: `release-gate.${candidateSha}.${Date.now()}`,
+    id: `release-gate.${gateMode}.${candidateSha}.${Date.now()}`,
     occurredAt: report.generatedAt,
     kind: eligible ? "health" : "anomaly",
-    name: "release_gate_decision",
+    name: gateMode === "preview" ? "preview_release_gate_decision" : "release_gate_decision",
     level: eligible ? "info" : "error",
     sessionId: `release.${candidateSha.slice(0, 12)}`,
-    data: {
-      candidateSha,
-      decision: report.decision,
-      reasons,
-      warnings,
-      foundation: report.signals.foundation,
-      regressionBudget: report.signals.regressionBudget,
-      productionSmoke: report.signals.productionSmoke,
-      controlCenter: report.signals.controlCenter,
-      criticalDiagnostics: report.signals.criticalDiagnostics,
-      recentProductionFatals: report.signals.recentProductionFatals,
-    },
+    data: { candidateSha, gateMode, decision: report.decision, reasons, warnings, storage: report.signals.storage },
   }];
-  if (releaseCandidate) {
-    events.push({
-      schemaVersion: 1,
-      id: `release-candidate.${releaseCandidate.candidateId}`,
-      occurredAt: releaseCandidate.createdAt,
-      kind: "health",
-      name: "release_candidate_registered",
-      level: "info",
-      sessionId: `release.${candidateSha.slice(0, 12)}`,
-      data: {
-        candidateId: releaseCandidate.candidateId,
-        candidateSha,
-        createdAt: releaseCandidate.createdAt,
-        expiresAt: releaseCandidate.expiresAt,
-        ttlHours,
-        regressionBudget: releaseCandidate.evidence.regressionBudget,
-        qualityBaselineSha: releaseCandidate.evidence.qualityBaselineSha,
-      },
-    });
-  }
+  if (releaseCandidate) events.push({
+    schemaVersion: 1,
+    id: `release-candidate.${releaseCandidate.candidateId}`,
+    occurredAt: releaseCandidate.createdAt,
+    kind: "health",
+    name: "release_candidate_registered",
+    level: "info",
+    sessionId: `release.${candidateSha.slice(0, 12)}`,
+    data: { candidateId: releaseCandidate.candidateId, candidateSha, gateMode, expiresAt: releaseCandidate.expiresAt },
+  });
   try {
     await fetch(`${baseUrl}/v1/telemetry`, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ release: "quality-release-gate", buildSha: candidateSha, events }),
+      body: JSON.stringify({ release: `${gateMode}-release-gate`, buildSha: candidateSha, events }),
     });
   } catch (error) {
     console.warn("release gate telemetry publish failed", error instanceof Error ? error.message : error);
