@@ -1,0 +1,93 @@
+name: post-release-sentinel
+
+on:
+  workflow_run:
+    workflows: [promotion-executor]
+    types: [completed]
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      promotion_run_id:
+        description: "Promotion Executor run ID (blank = latest successful run)"
+        required: false
+        type: string
+
+permissions:
+  actions: read
+  contents: read
+
+concurrency:
+  group: post-release-sentinel-${{ github.event.workflow_run.id || inputs.promotion_run_id || github.run_id }}
+  cancel-in-progress: false
+
+jobs:
+  observe:
+    if: ${{ github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success' }}
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+      HNK_TELEMETRY_BASE_URL: ${{ secrets.HNK_TELEMETRY_BASE_URL }}
+      HNK_TELEMETRY_ADMIN_TOKEN: ${{ secrets.HNK_TELEMETRY_ADMIN_TOKEN }}
+      HNK_GAME_PRODUCTION_URL: ${{ secrets.HNK_GAME_PRODUCTION_URL }}
+      HNK_SENTINEL_OBSERVE_MS: "120000"
+      HNK_SENTINEL_POLL_MS: "15000"
+      HNK_SENTINEL_ERROR_THRESHOLD: "3"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Resolve promotion run
+        id: promotion
+        shell: bash
+        run: |
+          set -euo pipefail
+          run_id="${{ github.event.workflow_run.id }}"
+          if [ -z "$run_id" ]; then run_id="${{ inputs.promotion_run_id }}"; fi
+          if [ -z "$run_id" ]; then
+            run_id=$(gh api "/repos/$GITHUB_REPOSITORY/actions/workflows/promotion-executor.yml/runs?status=success&per_page=20" --jq '.workflow_runs | map(select(.conclusion == "success")) | .[0].id // empty')
+          fi
+          test -n "$run_id" || { echo "No successful promotion-executor run found" >&2; exit 1; }
+          echo "run_id=$run_id" >> "$GITHUB_OUTPUT"
+
+      - name: Download exact promotion evidence
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts/sentinel-input /tmp/hnk-sentinel-promotion
+          run_id="${{ steps.promotion.outputs.run_id }}"
+          artifact_id=$(gh api "/repos/$GITHUB_REPOSITORY/actions/runs/$run_id/artifacts" --jq '.artifacts | map(select(.expired == false and (.name | startswith("promotion-")))) | .[0].id // empty')
+          test -n "$artifact_id" || { echo "Promotion run $run_id has no promotion artifact" >&2; exit 1; }
+          gh api "/repos/$GITHUB_REPOSITORY/actions/artifacts/$artifact_id/zip" > /tmp/hnk-sentinel-promotion.zip
+          unzip -q /tmp/hnk-sentinel-promotion.zip -d /tmp/hnk-sentinel-promotion
+          report=$(find /tmp/hnk-sentinel-promotion -name promotion-report.json -type f | head -n1 || true)
+          test -n "$report" || { echo "promotion-report.json missing from run $run_id" >&2; exit 1; }
+          cp "$report" artifacts/sentinel-input/promotion-report.json
+          node -e 'const fs=require("fs");const p=JSON.parse(fs.readFileSync("artifacts/sentinel-input/promotion-report.json","utf8"));if(p.status!=="completed")throw new Error(`promotion status ${p.status}`);console.log(`promotion=${p.promotionId} sha=${p.candidateSha}`)'
+
+      - name: Require sentinel configuration
+        shell: bash
+        run: |
+          test -n "$HNK_TELEMETRY_BASE_URL" || { echo "HNK_TELEMETRY_BASE_URL is required" >&2; exit 1; }
+          test -n "$HNK_TELEMETRY_ADMIN_TOKEN" || { echo "HNK_TELEMETRY_ADMIN_TOKEN is required" >&2; exit 1; }
+          test -n "$HNK_GAME_PRODUCTION_URL" || { echo "HNK_GAME_PRODUCTION_URL is required" >&2; exit 1; }
+
+      - name: Observe post-release runtime window
+        shell: bash
+        run: node apps/telemetry-control/scripts/post-release-sentinel.mjs
+
+      - name: Upload sentinel evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: post-release-sentinel-${{ steps.promotion.outputs.run_id }}-${{ github.run_id }}
+          path: |
+            artifacts/sentinel-input/promotion-report.json
+            artifacts/post-release-sentinel.json
+            artifacts/post-release-sentinel.md
+          if-no-files-found: warn
+          retention-days: 90
