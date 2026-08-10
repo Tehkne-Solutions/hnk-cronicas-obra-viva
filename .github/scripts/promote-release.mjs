@@ -18,11 +18,17 @@ const requestedAuthorizationId = process.env.HNK_AUTHORIZATION_ID ?? "";
 const requestedCandidateId = process.env.HNK_CANDIDATE_ID ?? "";
 const now = new Date();
 const failures = [];
+const warnings = [];
 
 function fingerprint(parts) {
   const hash = createHash("sha256");
   for (const part of parts) hash.update(JSON.stringify(part));
   return `sha256:${hash.digest("hex")}`;
+}
+
+function positiveNumber(value, fallback) {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
 }
 
 if (!requestedAuthorizationId) failures.push("authorization_id_required");
@@ -42,30 +48,46 @@ if (authorization.evidenceFingerprint !== expectedFingerprint) failures.push("au
 let promotionResponse = null;
 let verifiedManifest = null;
 let deployHookTarget = null;
+let renderDeployHttpStatus = null;
+let renderDeployId = null;
+let renderDeployQueued = false;
+let verificationAttempts = 0;
+let observedManifestSha = null;
+let verificationTimeoutMs = null;
+
 if (failures.length === 0) {
   try {
     const deployUrl = new URL(renderDeployHookUrl);
     deployUrl.searchParams.set("ref", candidate.candidateSha);
     deployHookTarget = `${deployUrl.origin}${deployUrl.pathname}?ref=${candidate.candidateSha}`;
     const response = await fetch(deployUrl, { method: "POST" });
+    renderDeployHttpStatus = response.status;
+    renderDeployQueued = response.status === 202;
     const text = await response.text();
     try { promotionResponse = JSON.parse(text); } catch { promotionResponse = { raw: text }; }
+    renderDeployId = promotionResponse?.id ?? promotionResponse?.deploy?.id ?? promotionResponse?.deployId ?? null;
     if (!response.ok) failures.push(`render_deploy_hook_failed:${response.status}`);
+    if (response.status === 200 && !renderDeployId) warnings.push("render_deploy_id_missing_on_200");
+    if (response.status === 202) warnings.push("render_deploy_queued");
   } catch (error) {
     failures.push(`render_deploy_hook_failed:${error instanceof Error ? error.message : String(error)}`);
   }
 }
 
 if (failures.length === 0) {
-  const timeoutMs = Number(process.env.HNK_POST_DEPLOY_TIMEOUT_MS ?? 180000);
-  const pollMs = Number(process.env.HNK_POST_DEPLOY_POLL_MS ?? 5000);
-  const deadline = Date.now() + Math.max(1000, timeoutMs);
+  const standardTimeoutMs = positiveNumber(process.env.HNK_POST_DEPLOY_TIMEOUT_MS, 180000);
+  const queuedTimeoutMs = positiveNumber(process.env.HNK_POST_DEPLOY_QUEUED_TIMEOUT_MS, 900000);
+  const pollMs = positiveNumber(process.env.HNK_POST_DEPLOY_POLL_MS, 5000);
+  verificationTimeoutMs = renderDeployQueued ? Math.max(standardTimeoutMs, queuedTimeoutMs) : standardTimeoutMs;
+  const deadline = Date.now() + Math.max(1000, verificationTimeoutMs);
   let lastError = "manifest_not_seen";
   while (Date.now() < deadline) {
+    verificationAttempts += 1;
     try {
       const response = await fetch(`${productionUrl}/release.json?ts=${Date.now()}`, { cache: "no-store" });
       if (response.ok) {
         const manifest = await response.json();
+        observedManifestSha = manifest?.buildSha ?? null;
         if (manifest?.buildSha === candidate.candidateSha && manifest?.signature === "Tehkné Solutions") {
           verifiedManifest = manifest;
           break;
@@ -77,12 +99,17 @@ if (failures.length === 0) {
     } catch (error) {
       lastError = error instanceof Error ? error.message : String(error);
     }
-    await new Promise((resolve) => setTimeout(resolve, Math.max(250, pollMs)));
+    await new Promise((resolveWait) => setTimeout(resolveWait, Math.max(250, pollMs)));
   }
   if (!verifiedManifest) failures.push(`post_deploy_verification_failed:${lastError}`);
 }
 
 const status = failures.length === 0 ? "completed" : "rollback_required";
+const verificationClassification = verifiedManifest
+  ? "verified"
+  : failures.some((item) => item.startsWith("post_deploy_verification_failed:"))
+    ? "unverified_after_timeout"
+    : "not_verified";
 const report = {
   schemaVersion: 1,
   promotionId: `promotion.${candidate.candidateSha?.slice(0, 12) ?? "unknown"}.${now.getTime()}`,
@@ -92,11 +119,20 @@ const report = {
   candidateSha: candidate.candidateSha ?? null,
   evidenceFingerprint: expectedFingerprint,
   status,
+  verificationClassification,
+  rollbackAction: "not_executed",
   promotedAt: now.toISOString(),
   productionUrl: productionUrl || null,
   deployHookTarget,
+  renderDeployHttpStatus,
+  renderDeployId,
+  renderDeployQueued,
+  verificationTimeoutMs,
+  verificationAttempts,
+  observedManifestSha,
   promotionResponse,
   verifiedManifest,
+  warnings,
   failures,
   signature: "Tehkné Solutions",
 };
@@ -112,7 +148,15 @@ const md = [
   `- SHA: \`${candidate.candidateSha ?? "—"}\``,
   `- Authorization: **${authorization.authorizationId ?? "—"}**`,
   `- Production: ${productionUrl || "—"}`,
+  `- Render hook HTTP: ${renderDeployHttpStatus ?? "—"}`,
+  `- Render deploy ID: ${renderDeployId ?? "—"}`,
+  `- Render queued: ${renderDeployQueued ? "yes" : "no"}`,
+  `- Verification: **${verificationClassification}**`,
+  `- Observed manifest SHA: \`${observedManifestSha ?? "—"}\``,
   `- Verified manifest: ${verifiedManifest ? "yes" : "no"}`,
+  `- Rollback action executed: **no**`,
+  "",
+  warnings.length ? `## Warnings\n${warnings.map((item) => `- ${item}`).join("\n")}` : "## Warnings\n- none",
   "",
   failures.length ? `## Failures\n${failures.map((item) => `- ${item}`).join("\n")}` : "## Failures\n- none",
   "",
@@ -134,12 +178,21 @@ if (telemetryBaseUrl) {
       promotionId: report.promotionId,
       provider: report.provider,
       status,
+      verificationClassification,
+      rollbackAction: report.rollbackAction,
       authorizationId: report.authorizationId,
       candidateId: report.candidateId,
       candidateSha: report.candidateSha,
       productionUrl: report.productionUrl,
+      renderDeployHttpStatus,
+      renderDeployId,
+      renderDeployQueued,
+      verificationTimeoutMs,
+      verificationAttempts,
+      observedManifestSha,
       verifiedManifestSha: verifiedManifest?.buildSha ?? null,
       evidenceFingerprint: expectedFingerprint,
+      warnings,
       failures,
     },
   };
