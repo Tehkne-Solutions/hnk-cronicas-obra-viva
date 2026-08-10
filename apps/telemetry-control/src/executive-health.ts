@@ -85,13 +85,14 @@ export function buildExecutiveHealthSnapshot(snapshot: ControlCenterSnapshot): E
     else if (latestPromotion.health !== "healthy") warnings.push(`latest_promotion_${latestPromotion.health}`);
     if (latestPromotion.sentinelStatus !== "pass") warnings.push(`post_release_sentinel_${latestPromotion.sentinelStatus}`);
     if (!latestPromotion.verifiedManifestSha || latestPromotion.verifiedManifestSha !== latestPromotion.candidateSha) blockers.push("release_manifest_not_verified");
+    if (quality.candidateSha && latestPromotion.candidateSha && quality.candidateSha !== latestPromotion.candidateSha) blockers.push("quality_release_sha_mismatch");
   }
 
   let status: ExecutiveStatus;
-  if (recovery.decision === "rollback_recommended" || blockers.includes("latest_promotion_requires_rollback")) status = "recovery_required";
+  if (productionEvents.length === 0) status = "unknown";
+  else if (recovery.decision === "rollback_recommended" || blockers.includes("latest_promotion_requires_rollback")) status = "recovery_required";
   else if (blockers.length > 0) status = "blocked";
   else if (warnings.length > 0) status = "watch";
-  else if (productionEvents.length === 0) status = "unknown";
   else status = "ready";
 
   const score = Math.max(0, Math.min(100,
