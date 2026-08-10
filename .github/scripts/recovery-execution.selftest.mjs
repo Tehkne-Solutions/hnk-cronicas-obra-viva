@@ -22,6 +22,10 @@ const required = [
   [files.executorScript, 'deployUrl.searchParams.set("ref", requestedTargetSha)'],
   [files.executorScript, "recovery_post_deploy_verification_failed"],
   [files.executorScript, 'name: status === "recovered" ? "recovery_completed" : "recovery_failed"'],
+  [files.executorScript, 'name: "incident_resolved"'],
+  [files.executorScript, "fingerprint: authorization.incidentFingerprint"],
+  [files.executorScript, "resolvedBuildSha: requestedTargetSha"],
+  [files.executorScript, 'resolution: "verified_render_recovery"'],
 ];
 
 for (const [source, token] of required) {
