@@ -55,7 +55,7 @@ jobs:
         run: |
           set +e
           start=$(date +%s%3N)
-          pnpm test && node .github/scripts/promotion-executor.selftest.mjs
+          pnpm test && node .github/scripts/promotion-executor.selftest.mjs && node .github/scripts/recovery-execution.selftest.mjs
           result=$?
           end=$(date +%s%3N)
           echo "duration_ms=$((end-start))" >> "$GITHUB_OUTPUT"
