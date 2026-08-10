@@ -56,14 +56,26 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p artifacts/candidate-quality
-          run_id=$(gh api \
-            -H "Accept: application/vnd.github+json" \
-            "/repos/$GITHUB_REPOSITORY/actions/workflows/foundation.yml/runs?head_sha=$HNK_CANDIDATE_SHA&status=success&per_page=20" \
-            --jq '.workflow_runs | map(select(.conclusion == "success")) | .[0].id // empty')
-          if [ -z "$run_id" ]; then
-            echo "No successful foundation run exists for candidate $HNK_CANDIDATE_SHA" >&2
-            exit 1
-          fi
+          run_id=""
+          for attempt in $(seq 1 18); do
+            runs=$(gh api \
+              -H "Accept: application/vnd.github+json" \
+              "/repos/$GITHUB_REPOSITORY/actions/workflows/foundation.yml/runs?head_sha=$HNK_CANDIDATE_SHA&per_page=20")
+            run_id=$(printf '%s' "$runs" | jq -r '.workflow_runs | map(select(.conclusion == "success")) | .[0].id // empty')
+            if [ -n "$run_id" ]; then break; fi
+            failed=$(printf '%s' "$runs" | jq -r '.workflow_runs | map(select(.status == "completed" and .conclusion != "success")) | .[0] | if . then "\(.id):\(.conclusion)" else empty end')
+            active=$(printf '%s' "$runs" | jq -r '.workflow_runs | map(select(.status != "completed")) | length')
+            if [ -n "$failed" ] && [ "$active" = "0" ]; then
+              echo "Foundation completed without success for candidate $HNK_CANDIDATE_SHA ($failed)" >&2
+              exit 1
+            fi
+            if [ "$attempt" = "18" ]; then
+              echo "No successful foundation run became available for candidate $HNK_CANDIDATE_SHA after 180s" >&2
+              exit 1
+            fi
+            echo "Waiting for foundation on candidate $HNK_CANDIDATE_SHA (attempt $attempt/18, active=$active)..."
+            sleep 10
+          done
           artifact_id=$(gh api "/repos/$GITHUB_REPOSITORY/actions/runs/$run_id/artifacts" \
             --jq '.artifacts | map(select(.expired == false and (.name | startswith("ci-quality-report-")))) | .[0].id // empty')
           if [ -z "$artifact_id" ]; then
