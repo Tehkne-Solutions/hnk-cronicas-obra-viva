@@ -10,6 +10,8 @@ on:
       - ".github/workflows/recovery-executor.yml"
       - ".github/workflows/promotion-executor.yml"
       - ".github/scripts/enforce-recovery-gate.mjs"
+      - ".github/scripts/probe-recovery-gate.mjs"
+      - ".github/scripts/discover-recovery-target.mjs"
       - ".github/scripts/authorize-recovery.mjs"
       - ".github/scripts/execute-recovery.mjs"
       - ".github/scripts/recovery-execution.selftest.mjs"
@@ -17,6 +19,7 @@ on:
       - "apps/telemetry-control/**"
 
 permissions:
+  actions: read
   contents: read
 
 jobs:
@@ -24,8 +27,10 @@ jobs:
     runs-on: ubuntu-latest
     environment: production
     env:
+      GH_TOKEN: ${{ github.token }}
       HNK_TELEMETRY_BASE_URL: ${{ secrets.HNK_TELEMETRY_BASE_URL }}
       HNK_TELEMETRY_ADMIN_TOKEN: ${{ secrets.HNK_TELEMETRY_ADMIN_TOKEN }}
+      HNK_GAME_PRODUCTION_URL: ${{ secrets.HNK_GAME_PRODUCTION_URL }}
       HNK_CANDIDATE_ID: recovery-gate-smoke
       HNK_AUTHORIZATION_ID: recovery-gate-smoke
     steps:
@@ -35,8 +40,11 @@ jobs:
         with:
           node-version: 22
 
-      - name: Validate authenticated Recovery Gate without Render promotion
-        run: node .github/scripts/enforce-recovery-gate.mjs
+      - name: Probe authenticated Recovery Gate without changing production
+        run: node .github/scripts/probe-recovery-gate.mjs
+
+      - name: Discover current production and last proven healthy recovery target
+        run: node .github/scripts/discover-recovery-target.mjs
 
       - name: Upload recovery smoke evidence
         if: always()
@@ -46,5 +54,8 @@ jobs:
           path: |
             artifacts/promotion-input/recovery-gate.json
             artifacts/promotion-input/recovery-gate.md
+            artifacts/recovery-target/recovery-target-discovery.json
+            artifacts/recovery-target/recovery-target-discovery.md
+            artifacts/recovery-target/healthy-promotion-report.json
           if-no-files-found: warn
           retention-days: 30
