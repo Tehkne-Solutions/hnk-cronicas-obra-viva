@@ -43,6 +43,10 @@ function millisBetween(start: string, end: string): number {
   return Math.max(0, Date.parse(end) - Date.parse(start));
 }
 
+function transition(state: IncidentLifecycleState, event: StoredTelemetryEvent, at = eventTime(event)): IncidentLifecycleTransition {
+  return Object.freeze({ state, at, eventId: event.id, ...(event.buildSha ? { buildSha: event.buildSha } : {}) });
+}
+
 export function deriveIncidentLifecycles(events: readonly StoredTelemetryEvent[], nowIso: string): readonly IncidentLifecycle[] {
   const regressions = events.filter((event) => event.name === "promotion_rollback_required" || event.name === "post_release_sentinel_fail");
   const byFingerprint = new Map<string, { intelligence: IncidentIntelligence; regressionEvents: StoredTelemetryEvent[] }>();
@@ -64,14 +68,16 @@ export function deriveIncidentLifecycles(events: readonly StoredTelemetryEvent[]
       .filter((event) => eventFingerprint(event) === fingerprint && TRANSITIONS[event.name])
       .sort((a, b) => eventTime(a).localeCompare(eventTime(b)));
     const regressionsForFingerprint = [...group.regressionEvents].sort((a, b) => eventTime(a).localeCompare(eventTime(b)));
-    const openedAt = eventTime(regressionsForFingerprint[0]);
+    const firstRegression = regressionsForFingerprint[0];
+    if (!firstRegression) continue;
+    const openedAt = eventTime(firstRegression);
     let state: IncidentLifecycleState = "open";
     let investigationStartedAt: string | undefined;
     let mitigatedAt: string | undefined;
     let resolvedAt: string | undefined;
     let resolvedBuildSha: string | undefined;
     let reopenCount = 0;
-    const transitions: IncidentLifecycleTransition[] = [{ state: "open", at: openedAt, eventId: regressionsForFingerprint[0].id, buildSha: regressionsForFingerprint[0].buildSha }];
+    const transitions: IncidentLifecycleTransition[] = [transition("open", firstRegression, openedAt)];
 
     const timeline = [
       ...related.map((event) => ({ kind: "transition" as const, event, at: eventTime(event) })),
@@ -87,7 +93,7 @@ export function deriveIncidentLifecycles(events: readonly StoredTelemetryEvent[]
           mitigatedAt = undefined;
           resolvedAt = undefined;
           resolvedBuildSha = undefined;
-          transitions.push({ state: "open", at: entry.at, eventId: entry.event.id, buildSha: entry.event.buildSha });
+          transitions.push(transition("open", entry.event, entry.at));
         }
         continue;
       }
@@ -101,7 +107,7 @@ export function deriveIncidentLifecycles(events: readonly StoredTelemetryEvent[]
         resolvedBuildSha = typeof value === "string" ? value : entry.event.buildSha;
       }
       state = next;
-      transitions.push({ state: next, at: entry.at, eventId: entry.event.id, buildSha: entry.event.buildSha });
+      transitions.push(transition(next, entry.event, entry.at));
     }
 
     const terminalAt = resolvedAt ?? nowIso;
