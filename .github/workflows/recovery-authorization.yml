@@ -1,0 +1,80 @@
+name: recovery-authorization
+
+on:
+  workflow_dispatch:
+    inputs:
+      target_sha:
+        description: "Previously verified healthy production SHA"
+        required: true
+        type: string
+      incident_fingerprint:
+        description: "Blocking incident fingerprint"
+        required: true
+        type: string
+      reason:
+        description: "Why rollback is required"
+        required: true
+        type: string
+      confirmation:
+        description: "Type AUTHORIZE_ROLLBACK"
+        required: true
+        type: string
+
+permissions:
+  actions: read
+  contents: read
+
+jobs:
+  authorize:
+    runs-on: ubuntu-latest
+    environment: production
+    env:
+      GH_TOKEN: ${{ github.token }}
+      HNK_RECOVERY_TARGET_SHA: ${{ inputs.target_sha }}
+      HNK_RECOVERY_INCIDENT_FINGERPRINT: ${{ inputs.incident_fingerprint }}
+      HNK_RECOVERY_REASON: ${{ inputs.reason }}
+      HNK_RECOVERY_CONFIRMATION: ${{ inputs.confirmation }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Locate prior completed promotion proving healthy target
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts/recovery-input /tmp/hnk-recovery-search
+          found=""
+          runs=$(gh api "/repos/$GITHUB_REPOSITORY/actions/workflows/promotion-executor.yml/runs?status=success&per_page=50" --jq '.workflow_runs[].id')
+          for run_id in $runs; do
+            artifact_id=$(gh api "/repos/$GITHUB_REPOSITORY/actions/runs/$run_id/artifacts" --jq '.artifacts | map(select(.expired == false and (.name | startswith("promotion-")))) | .[0].id // empty')
+            [ -n "$artifact_id" ] || continue
+            rm -rf /tmp/hnk-recovery-search/*
+            gh api "/repos/$GITHUB_REPOSITORY/actions/artifacts/$artifact_id/zip" > /tmp/hnk-recovery.zip || continue
+            unzip -q /tmp/hnk-recovery.zip -d /tmp/hnk-recovery-search || continue
+            report=$(find /tmp/hnk-recovery-search -name promotion-report.json -type f | head -n1 || true)
+            [ -n "$report" ] || continue
+            ok=$(node -e 'const fs=require("fs");const x=JSON.parse(fs.readFileSync(process.argv[1],"utf8"));process.stdout.write(x.status==="completed"&&x.candidateSha===process.env.HNK_RECOVERY_TARGET_SHA&&x.verifiedManifest?.buildSha===process.env.HNK_RECOVERY_TARGET_SHA&&x.signature==="Tehkné Solutions"?"yes":"no")' "$report")
+            if [ "$ok" = "yes" ]; then
+              cp "$report" artifacts/recovery-input/healthy-promotion-report.json
+              found="$run_id"
+              echo "healthy promotion evidence run: $run_id"
+              break
+            fi
+          done
+          test -n "$found" || { echo "No prior completed promotion proves target SHA $HNK_RECOVERY_TARGET_SHA healthy" >&2; exit 1; }
+      - name: Authorize exact recovery
+        run: node .github/scripts/authorize-recovery.mjs
+      - name: Upload recovery authorization evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: recovery-authorization-${{ inputs.target_sha }}-${{ github.run_id }}
+          path: |
+            artifacts/recovery-input/healthy-promotion-report.json
+            artifacts/recovery-authorization/recovery-authorization.json
+            artifacts/recovery-authorization/recovery-authorization.md
+          if-no-files-found: warn
+          retention-days: 90
