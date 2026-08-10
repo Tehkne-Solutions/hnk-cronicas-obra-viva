@@ -1,0 +1,42 @@
+name: recovery-contract-smoke
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - ".github/scripts/execute-recovery.mjs"
+      - ".github/scripts/authorize-recovery.mjs"
+      - ".github/scripts/recovery-runtime-smoke.mjs"
+      - ".github/workflows/recovery-authorization.yml"
+      - ".github/workflows/recovery-executor.yml"
+      - ".github/workflows/recovery-contract-smoke.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: recovery-contract-smoke-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Run static Recovery Execution invariants
+        run: node .github/scripts/recovery-execution.selftest.mjs
+      - name: Run non-destructive Recovery Runtime Smoke
+        run: node .github/scripts/recovery-runtime-smoke.mjs
+      - name: Upload recovery contract evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: recovery-contract-smoke-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            artifacts/recovery-runtime-smoke.json
+            artifacts/recovery-runtime-smoke.md
+          if-no-files-found: error
+          retention-days: 90
