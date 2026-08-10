@@ -25,7 +25,7 @@ concurrency:
 
 jobs:
   recover:
-    if: ${{ github.event_name == 'workflow_dispatch' || (github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'workflow_dispatch' && github.event.workflow_run.head_branch == 'main') }}
+    if: ${{ (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main') || (github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'workflow_dispatch' && github.event.workflow_run.head_branch == 'main') }}
     runs-on: ubuntu-latest
     environment: production
     env:
@@ -38,9 +38,20 @@ jobs:
       HNK_TELEMETRY_ADMIN_TOKEN: ${{ secrets.HNK_TELEMETRY_ADMIN_TOKEN }}
       HNK_TELEMETRY_GAME_ORIGIN: ${{ secrets.HNK_TELEMETRY_GAME_ORIGIN }}
     steps:
+      - name: Require deterministic recovery executor snapshot
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ "$GITHUB_EVENT_NAME" = "workflow_run" ]; then
+            source_head='${{ github.event.workflow_run.head_sha }}'
+            test "$GITHUB_SHA" = "$source_head" || { echo "Main advanced after recovery authorization ($source_head -> $GITHUB_SHA); rerun recovery authorization on current main" >&2; exit 1; }
+          else
+            test "$GITHUB_REF" = "refs/heads/main" || { echo "Manual recovery executor must be dispatched from main; got $GITHUB_REF" >&2; exit 1; }
+          fi
+
       - uses: actions/checkout@v4
         with:
-          ref: main
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
       - uses: actions/setup-node@v4
         with:
           node-version: 22
@@ -108,7 +119,7 @@ jobs:
             unzip -q /tmp/hnk-recovery-auth.zip -d /tmp/hnk-recovery-auth-search
             auth=$(find /tmp/hnk-recovery-auth-search -name recovery-authorization.json -type f | head -n1 || true)
             healthy=$(find /tmp/hnk-recovery-auth-search -name healthy-promotion-report.json -type f | head -n1 || true)
-            test -n "$auth" && test -n "$healthy" || { echo "Source authorization evidence incomplete" >&2; exit 1; }
+            test -n "$auth" && [ -n "$healthy" ] || { echo "Source authorization evidence incomplete" >&2; exit 1; }
             validate_and_bind "$auth" "$healthy" "$source_run" "$source_event" "$source_branch" "$source_head_sha" "$source_repo"
           else
             found=""
