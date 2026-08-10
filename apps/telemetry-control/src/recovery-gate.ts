@@ -1,6 +1,7 @@
 import type { ControlCenterSnapshot } from "@hnk/telemetry-control-core";
 import { deriveIncidentLifecycles } from "./incident-lifecycle.js";
 import { recommendRecovery, recoveryDecisionRank, type RecoveryRecommendation } from "./recovery-intelligence.js";
+import { isSyntheticRecoveryEvent } from "./recovery-synthetic.js";
 
 export interface RecoveryGateSnapshot {
   readonly schemaVersion: 1;
@@ -8,12 +9,15 @@ export interface RecoveryGateSnapshot {
   readonly decision: RecoveryRecommendation["decision"];
   readonly blocked: boolean;
   readonly activeIncidents: number;
+  readonly ignoredSyntheticEvents: number;
   readonly recommendations: readonly RecoveryRecommendation[];
   readonly signature: "Tehkné Solutions";
 }
 
 export function buildRecoveryGateSnapshot(snapshot: ControlCenterSnapshot): RecoveryGateSnapshot {
-  const incidents = deriveIncidentLifecycles(snapshot.recentEvents, snapshot.generatedAt);
+  const productionEvents = snapshot.recentEvents.filter((event) => !isSyntheticRecoveryEvent(event));
+  const ignoredSyntheticEvents = snapshot.recentEvents.length - productionEvents.length;
+  const incidents = deriveIncidentLifecycles(productionEvents, snapshot.generatedAt);
   const active = incidents.filter((incident) => incident.lifecycleState !== "resolved");
   const recommendations = active
     .map(recommendRecovery)
@@ -26,6 +30,7 @@ export function buildRecoveryGateSnapshot(snapshot: ControlCenterSnapshot): Reco
     decision,
     blocked,
     activeIncidents: active.length,
+    ignoredSyntheticEvents,
     recommendations: Object.freeze(recommendations),
     signature: "Tehkné Solutions",
   });

@@ -16,6 +16,7 @@ async function boot() {
 }
 
 const auth = { authorization: "Bearer secret" };
+const productionSha = "0f1dccb9ab0fe3694eeeb0d8ca1e7b9530def4b7";
 
 describe("recovery gate API", () => {
   it("allows promotion when there are no active incidents", async () => {
@@ -29,7 +30,7 @@ describe("recovery gate API", () => {
     expect(body.activeIncidents).toBe(0);
   });
 
-  it("blocks promotion when an unresolved post-release regression exists", async () => {
+  it("blocks promotion when an unresolved production regression exists", async () => {
     const base = await boot();
     const occurredAt = new Date().toISOString();
     const event = {
@@ -40,9 +41,9 @@ describe("recovery gate API", () => {
       name: "post_release_sentinel_fail",
       level: "error",
       sessionId: "sentinel.production",
-      data: { candidateSha: "a".repeat(40), failures: ["runtime_error_threshold:4"] },
+      data: { candidateSha: productionSha, failures: ["runtime_error_threshold:4"] },
     };
-    const accepted = await fetch(`${base}/v1/telemetry`, { method: "POST", headers: { "content-type": "application/json", origin: "https://game.example" }, body: JSON.stringify({ release: "production", buildSha: "a".repeat(40), events: [event] }) });
+    const accepted = await fetch(`${base}/v1/telemetry`, { method: "POST", headers: { "content-type": "application/json", origin: "https://game.example" }, body: JSON.stringify({ release: "production", buildSha: productionSha, events: [event] }) });
     expect(accepted.status).toBe(202);
     const response = await fetch(`${base}/api/recovery`, { headers: auth });
     const body = await response.json() as { decision: string; blocked: boolean; activeIncidents: number; recommendations: Array<{ fingerprint: string }> };
@@ -50,5 +51,28 @@ describe("recovery gate API", () => {
     expect(body.decision).toBe("block_promotion");
     expect(body.activeIncidents).toBe(1);
     expect(body.recommendations[0]?.fingerprint).toHaveLength(20);
+  });
+
+  it("keeps synthetic fixture incidents visible in telemetry but excludes them from promotion enforcement", async () => {
+    const base = await boot();
+    const occurredAt = new Date().toISOString();
+    const event = {
+      schemaVersion: 1,
+      id: "fixture.failure.1",
+      occurredAt,
+      kind: "anomaly",
+      name: "post_release_sentinel_fail",
+      level: "error",
+      sessionId: "fixture.recovery",
+      data: { candidateSha: "a".repeat(40), failures: ["manifest_mismatch"] },
+    };
+    const accepted = await fetch(`${base}/v1/telemetry`, { method: "POST", headers: { "content-type": "application/json", origin: "https://game.example" }, body: JSON.stringify({ release: "test", buildSha: "a".repeat(40), events: [event] }) });
+    expect(accepted.status).toBe(202);
+    const response = await fetch(`${base}/api/recovery`, { headers: auth });
+    const body = await response.json() as { decision: string; blocked: boolean; activeIncidents: number; ignoredSyntheticEvents: number };
+    expect(body.decision).toBe("continue");
+    expect(body.blocked).toBe(false);
+    expect(body.activeIncidents).toBe(0);
+    expect(body.ignoredSyntheticEvents).toBeGreaterThanOrEqual(1);
   });
 });
