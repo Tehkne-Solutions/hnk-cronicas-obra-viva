@@ -6,7 +6,14 @@ on:
     branches: [main]
     paths:
       - ".github/workflows/recovery-gate-smoke.yml"
+      - ".github/workflows/recovery-authorization.yml"
+      - ".github/workflows/recovery-executor.yml"
+      - ".github/workflows/promotion-executor.yml"
       - ".github/scripts/enforce-recovery-gate.mjs"
+      - ".github/scripts/authorize-recovery.mjs"
+      - ".github/scripts/execute-recovery.mjs"
+      - ".github/scripts/recovery-execution.selftest.mjs"
+      - ".github/scripts/recovery-runtime-smoke.mjs"
       - "apps/telemetry-control/**"
 
 permissions:
