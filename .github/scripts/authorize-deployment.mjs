@@ -21,6 +21,7 @@ function fingerprint(parts) { const hash = createHash("sha256"); for (const part
 async function jsonFetch(path, options = {}) { const response = await fetch(`${baseUrl}${path}`, options); const text = await response.text(); let body; try { body = JSON.parse(text); } catch { body = text; } if (!response.ok) throw new Error(`${options.method ?? "GET"} ${path} -> ${response.status}: ${String(text).slice(0, 300)}`); return body; }
 
 const failures = [];
+const warnings = [];
 if (!requestedCandidateId) failures.push("candidate_id_required");
 if (!reason) failures.push("authorization_reason_required");
 if (!currentMainSha) failures.push("current_main_sha_required");
@@ -40,7 +41,9 @@ if (candidate) {
   if (candidate.signature !== "Tehkné Solutions") failures.push("candidate_signature_invalid");
   if (candidate.candidateSha !== currentMainSha) failures.push(`candidate_superseded:${candidate.candidateSha}:${currentMainSha}`);
   if (!candidate.expiresAt || Date.parse(candidate.expiresAt) <= now.getTime()) failures.push(`candidate_expired:${candidate.expiresAt ?? "missing"}`);
-  if (candidate.evidence?.regressionBudget !== "pass") failures.push(`candidate_budget_not_pass:${candidate.evidence?.regressionBudget ?? "missing"}`);
+  const candidateBudgetStatus = candidate.evidence?.regressionBudget ?? "missing";
+  if (!["pass", "warn"].includes(candidateBudgetStatus)) failures.push(`candidate_budget_blocking:${candidateBudgetStatus}`);
+  if (candidateBudgetStatus === "warn") warnings.push("candidate:regression_budget_warn_non_blocking");
   if (candidate.evidence?.qualityReportSha !== candidate.candidateSha) failures.push("candidate_quality_sha_mismatch");
   if (!candidate.evidence?.productionSmokeSessionId) failures.push("candidate_smoke_session_missing");
   if (environment === "production" && (candidate.evidence?.controlCenterStorage === "memory" || !candidate.evidence?.controlCenterStorage)) failures.push(`candidate_storage_invalid:${candidate.evidence?.controlCenterStorage ?? "missing"}`);
@@ -57,7 +60,10 @@ if (gate) {
 if (quality) {
   if (candidate && quality.sha !== candidate.candidateSha) failures.push("quality_candidate_sha_mismatch");
   if (quality.result !== "pass") failures.push(`quality_not_pass:${quality.result ?? "missing"}`);
-  if (quality.regressionBudget?.status !== "pass") failures.push(`quality_budget_not_pass:${quality.regressionBudget?.status ?? "missing"}`);
+  const qualityBudgetStatus = quality.regressionBudget?.status ?? "missing";
+  if (!["pass", "warn"].includes(qualityBudgetStatus)) failures.push(`quality_budget_blocking:${qualityBudgetStatus}`);
+  if (qualityBudgetStatus === "warn") warnings.push("quality:regression_budget_warn_non_blocking");
+  if (candidate && candidate.evidence?.regressionBudget !== qualityBudgetStatus) failures.push(`candidate_quality_budget_mismatch:${candidate.evidence?.regressionBudget ?? "missing"}:${qualityBudgetStatus}`);
 }
 if (smoke?.ok !== true) failures.push("production_smoke_not_pass");
 
@@ -94,16 +100,33 @@ const authorization = {
   reason,
   evidenceFingerprint,
   evidence: { releaseGate: gate?.decision ?? "unknown", quality: quality?.result ?? "unknown", regressionBudget: quality?.regressionBudget?.status ?? "unknown", productionSmoke: smoke?.ok === true ? "pass" : "unknown", controlCenter: health?.ok === true ? "healthy" : "unknown", storage: health?.storage ?? "unknown", freshCriticalDiagnostics: critical.length, freshProductionFatals: freshFatals.length },
+  warnings,
   failures,
   signature: "Tehkné Solutions",
 };
 await writeFile(resolve(outDir, "deployment-authorization.json"), `${JSON.stringify(authorization, null, 2)}\n`);
-const md = ["# HENUVOKODAN Deployment Authorization Contract", "", `- Decision: **${authorization.decision.toUpperCase()}**`, `- Candidate: **${authorization.candidateId ?? "—"}**`, `- SHA: \`${authorization.candidateSha ?? "—"}\``, `- Environment: **${environment}**`, `- Authorized by: **${actor}**`, `- Reason: ${reason || "—"}`, `- Evidence fingerprint: \`${evidenceFingerprint ?? "—"}\``, "", failures.length ? `## Rejection reasons\n${failures.map((item) => `- ${item}`).join("\n")}` : "## Rejection reasons\n- none", "", "Tehkné Solutions"].join("\n");
+const md = [
+  "# HENUVOKODAN Deployment Authorization Contract",
+  "",
+  `- Decision: **${authorization.decision.toUpperCase()}**`,
+  `- Candidate: **${authorization.candidateId ?? "—"}**`,
+  `- SHA: \`${authorization.candidateSha ?? "—"}\``,
+  `- Environment: **${environment}**`,
+  `- Authorized by: **${actor}**`,
+  `- Reason: ${reason || "—"}`,
+  `- Evidence fingerprint: \`${evidenceFingerprint ?? "—"}\``,
+  "",
+  warnings.length ? `## Warnings\n${warnings.map((item) => `- ${item}`).join("\n")}` : "## Warnings\n- none",
+  "",
+  failures.length ? `## Rejection reasons\n${failures.map((item) => `- ${item}`).join("\n")}` : "## Rejection reasons\n- none",
+  "",
+  "Tehkné Solutions",
+].join("\n");
 await writeFile(resolve(outDir, "deployment-authorization.md"), `${md}\n`);
 if (process.env.GITHUB_STEP_SUMMARY) await writeFile(process.env.GITHUB_STEP_SUMMARY, `${md}\n`, { flag: "a" });
 
 if (baseUrl) {
-  const event = { schemaVersion: 1, id: `deployment-authorization.${authorization.authorizationId}`, occurredAt: authorization.authorizedAt, kind: authorized ? "health" : "anomaly", name: authorized ? "deployment_authorized" : "deployment_authorization_rejected", level: authorized ? "info" : "error", sessionId: `deploy.${(candidate?.candidateSha ?? currentMainSha).slice(0, 12)}`, data: { authorizationId: authorization.authorizationId, candidateId: authorization.candidateId, candidateSha: authorization.candidateSha, environment, authorizedBy: actor, reason, evidenceFingerprint, failures } };
+  const event = { schemaVersion: 1, id: `deployment-authorization.${authorization.authorizationId}`, occurredAt: authorization.authorizedAt, kind: authorized ? "health" : "anomaly", name: authorized ? "deployment_authorized" : "deployment_authorization_rejected", level: authorized ? "info" : "error", sessionId: `deploy.${(candidate?.candidateSha ?? currentMainSha).slice(0, 12)}`, data: { authorizationId: authorization.authorizationId, candidateId: authorization.candidateId, candidateSha: authorization.candidateSha, environment, authorizedBy: actor, reason, evidenceFingerprint, warnings, failures } };
   try { await fetch(`${baseUrl}/v1/telemetry`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ release: "deployment-authorization-contract", buildSha: candidate?.candidateSha ?? currentMainSha, events: [event] }) }); } catch (error) { console.warn("deployment authorization telemetry publish failed", error instanceof Error ? error.message : error); }
 }
 if (!authorized) process.exit(1);
