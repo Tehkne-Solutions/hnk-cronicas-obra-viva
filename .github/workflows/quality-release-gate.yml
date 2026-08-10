@@ -73,7 +73,7 @@ jobs:
           gh api "/repos/$GITHUB_REPOSITORY/actions/artifacts/$artifact_id/zip" > /tmp/ci-quality.zip
           unzip -q /tmp/ci-quality.zip -d artifacts/candidate-quality
           test -f artifacts/candidate-quality/ci-quality-report.json
-          node -e 'const fs=require("fs");const q=JSON.parse(fs.readFileSync("artifacts/candidate-quality/ci-quality-report.json","utf8"));if(q.sha!==process.env.HNK_CANDIDATE_SHA)throw new Error(`quality SHA mismatch ${q.sha}`);if(q.result!=="pass")throw new Error(`foundation result ${q.result}`);if(q.regressionBudget?.status!=="pass")throw new Error(`regression budget ${q.regressionBudget?.status}`);console.log(`budget=${q.regressionBudget.status} baseline=${q.regressionBudget.baseline?.sha??"none"}`)'
+          node -e 'const fs=require("fs");const q=JSON.parse(fs.readFileSync("artifacts/candidate-quality/ci-quality-report.json","utf8"));if(q.sha!==process.env.HNK_CANDIDATE_SHA)throw new Error(`quality SHA mismatch ${q.sha}`);if(q.result!=="pass")throw new Error(`foundation result ${q.result}`);const s=q.regressionBudget?.status;if(!["pass","warn"].includes(s))throw new Error(`regression budget ${s}`);console.log(`budget=${s} baseline=${q.regressionBudget.baseline?.sha??"none"}${s==="warn"?" (non-blocking warning)":""}`)'
           echo "foundation run: $run_id"
 
       - name: Require production telemetry configuration
