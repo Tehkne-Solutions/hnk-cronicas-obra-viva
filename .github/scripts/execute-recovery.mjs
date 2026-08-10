@@ -16,6 +16,7 @@ const failures = [];
 if (authorization.authorizationId !== requestedAuthorizationId) failures.push("recovery_authorization_id_mismatch");
 if (authorization.authorized !== true || authorization.decision !== "authorized") failures.push("recovery_not_authorized");
 if (authorization.targetSha !== requestedTargetSha) failures.push("recovery_target_sha_mismatch");
+if (!authorization.incidentFingerprint) failures.push("recovery_incident_fingerprint_missing");
 if (healthyPromotion.status !== "completed" || healthyPromotion.candidateSha !== requestedTargetSha || healthyPromotion.verifiedManifest?.buildSha !== requestedTargetSha) failures.push("target_not_proven_healthy");
 if (healthyPromotion.signature !== "Tehkné Solutions" || authorization.signature !== "Tehkné Solutions") failures.push("recovery_evidence_signature_invalid");
 if (recoveryGate.blocked !== true || recoveryGate.decision !== "rollback_recommended") failures.push(`recovery_gate_no_longer_requires_rollback:${recoveryGate.decision ?? "unknown"}`);
@@ -90,6 +91,7 @@ const md = [
   `- Incident: \`${authorization.incidentFingerprint ?? "—"}\``,
   `- Authorization: **${authorization.authorizationId ?? "—"}**`,
   `- Verified manifest: ${verifiedManifest ? "yes" : "no"}`,
+  `- Incident lifecycle closed: ${status === "recovered" ? "yes" : "no"}`,
   "",
   failures.length ? `## Failures\n${failures.map((x) => `- ${x}`).join("\n")}` : "## Failures\n- none",
   "",
@@ -99,7 +101,7 @@ await writeFile(resolve(root, "artifacts/recovery-report.md"), `${md}\n`);
 if (process.env.GITHUB_STEP_SUMMARY) await writeFile(process.env.GITHUB_STEP_SUMMARY, `${md}\n`, { flag: "a" });
 
 if (telemetryBaseUrl) {
-  const event = {
+  const events = [{
     schemaVersion: 1,
     id: `recovery-outcome.${report.recoveryId}`,
     occurredAt: report.recoveredAt,
@@ -109,9 +111,29 @@ if (telemetryBaseUrl) {
     sessionId: `recovery.${requestedTargetSha.slice(0, 12)}`,
     buildSha: requestedTargetSha || null,
     data: { recoveryId: report.recoveryId, status, authorizationId: report.authorizationId, incidentFingerprint: report.incidentFingerprint, targetSha: report.targetSha, verifiedManifestSha: verifiedManifest?.buildSha ?? null, failures },
-  };
+  }];
+  if (status === "recovered" && authorization.incidentFingerprint) {
+    events.push({
+      schemaVersion: 1,
+      id: `incident-resolved.${authorization.incidentFingerprint}.${now.getTime()}`,
+      occurredAt: report.recoveredAt,
+      kind: "health",
+      name: "incident_resolved",
+      level: "info",
+      sessionId: `incident.${authorization.incidentFingerprint}`,
+      buildSha: requestedTargetSha || null,
+      data: {
+        fingerprint: authorization.incidentFingerprint,
+        recoveryId: report.recoveryId,
+        recoveryAuthorizationId: report.authorizationId,
+        resolvedBuildSha: requestedTargetSha,
+        verifiedManifestSha: verifiedManifest?.buildSha ?? null,
+        resolution: "verified_render_recovery",
+      },
+    });
+  }
   try {
-    const response = await fetch(`${telemetryBaseUrl}/v1/telemetry`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ release: "recovery-executor", buildSha: requestedTargetSha || null, events: [event] }) });
+    const response = await fetch(`${telemetryBaseUrl}/v1/telemetry`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ release: "recovery-executor", buildSha: requestedTargetSha || null, events }) });
     if (!response.ok) console.warn(`recovery telemetry publish returned ${response.status}`);
   } catch (error) { console.warn("recovery telemetry publish failed", error instanceof Error ? error.message : error); }
 }
