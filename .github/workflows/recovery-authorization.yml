@@ -3,20 +3,12 @@ name: recovery-authorization
 on:
   workflow_dispatch:
     inputs:
-      target_sha:
-        description: "Previously verified healthy production SHA"
-        required: true
-        type: string
-      incident_fingerprint:
-        description: "Blocking incident fingerprint"
-        required: true
-        type: string
       reason:
-        description: "Why rollback is required"
+        description: "Why recovery is required"
         required: true
         type: string
       confirmation:
-        description: "Type AUTHORIZE_ROLLBACK"
+        description: "Type AUTHORIZE_ROLLBACK to authorize exact verified recovery"
         required: true
         type: string
 
@@ -30,10 +22,13 @@ jobs:
     environment: production
     env:
       GH_TOKEN: ${{ github.token }}
-      HNK_RECOVERY_TARGET_SHA: ${{ inputs.target_sha }}
-      HNK_RECOVERY_INCIDENT_FINGERPRINT: ${{ inputs.incident_fingerprint }}
       HNK_RECOVERY_REASON: ${{ inputs.reason }}
       HNK_RECOVERY_CONFIRMATION: ${{ inputs.confirmation }}
+      HNK_TELEMETRY_BASE_URL: ${{ secrets.HNK_TELEMETRY_BASE_URL }}
+      HNK_TELEMETRY_ADMIN_TOKEN: ${{ secrets.HNK_TELEMETRY_ADMIN_TOKEN }}
+      HNK_GAME_PRODUCTION_URL: ${{ secrets.HNK_GAME_PRODUCTION_URL }}
+      HNK_CANDIDATE_ID: recovery-authorization
+      HNK_AUTHORIZATION_ID: recovery-authorization
     steps:
       - uses: actions/checkout@v4
         with:
@@ -41,38 +36,57 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-      - name: Locate prior completed promotion proving healthy target
+
+      - name: Probe live Recovery Gate
+        run: node .github/scripts/probe-recovery-gate.mjs
+
+      - name: Discover exact proven healthy recovery target
+        run: node .github/scripts/discover-recovery-target.mjs
+
+      - name: Bind authorization to live incident and proven healthy SHA
         shell: bash
         run: |
           set -euo pipefail
-          mkdir -p artifacts/recovery-input /tmp/hnk-recovery-search
-          found=""
-          runs=$(gh api "/repos/$GITHUB_REPOSITORY/actions/workflows/promotion-executor.yml/runs?status=success&per_page=50" --jq '.workflow_runs[].id')
-          for run_id in $runs; do
-            artifact_id=$(gh api "/repos/$GITHUB_REPOSITORY/actions/runs/$run_id/artifacts" --jq '.artifacts | map(select(.expired == false and (.name | startswith("promotion-")))) | .[0].id // empty')
-            [ -n "$artifact_id" ] || continue
-            rm -rf /tmp/hnk-recovery-search/*
-            gh api "/repos/$GITHUB_REPOSITORY/actions/artifacts/$artifact_id/zip" > /tmp/hnk-recovery.zip || continue
-            unzip -q /tmp/hnk-recovery.zip -d /tmp/hnk-recovery-search || continue
-            report=$(find /tmp/hnk-recovery-search -name promotion-report.json -type f | head -n1 || true)
-            [ -n "$report" ] || continue
-            ok=$(node -e 'const fs=require("fs");const x=JSON.parse(fs.readFileSync(process.argv[1],"utf8"));process.stdout.write(x.status==="completed"&&x.candidateSha===process.env.HNK_RECOVERY_TARGET_SHA&&x.verifiedManifest?.buildSha===process.env.HNK_RECOVERY_TARGET_SHA&&x.signature==="Tehkné Solutions"?"yes":"no")' "$report")
-            if [ "$ok" = "yes" ]; then
-              cp "$report" artifacts/recovery-input/healthy-promotion-report.json
-              found="$run_id"
-              echo "healthy promotion evidence run: $run_id"
-              break
-            fi
-          done
-          test -n "$found" || { echo "No prior completed promotion proves target SHA $HNK_RECOVERY_TARGET_SHA healthy" >&2; exit 1; }
+          node <<'NODE'
+          const fs = require('fs');
+          const gate = JSON.parse(fs.readFileSync('artifacts/promotion-input/recovery-gate.json', 'utf8'));
+          const discovery = JSON.parse(fs.readFileSync('artifacts/recovery-target/recovery-target-discovery.json', 'utf8'));
+          const targetSha = discovery?.lastProvenHealthy?.sha;
+          const fingerprint = discovery?.recoveryGate?.topIncidentFingerprint;
+          const dispositions = new Set(['rollback_to_verified_healthy_target', 'reassert_verified_healthy_target']);
+
+          if (gate?.blocked !== true || gate?.decision !== 'rollback_recommended') {
+            throw new Error(`live recovery gate does not require recovery: ${gate?.decision ?? 'unknown'}`);
+          }
+          if (!/^[0-9a-f]{40}$/i.test(targetSha ?? '')) throw new Error('discovery did not prove a healthy target SHA');
+          if (!/^[0-9a-f]{20}$/i.test(fingerprint ?? '')) throw new Error('discovery did not resolve a blocking incident fingerprint');
+          if (!dispositions.has(discovery?.recoveryDisposition)) {
+            throw new Error(`recovery disposition is not executable: ${discovery?.recoveryDisposition ?? 'unknown'}`);
+          }
+          if (gate?.recommendations?.[0]?.fingerprint !== fingerprint) throw new Error('live gate/discovery incident mismatch');
+          if (!fs.existsSync('artifacts/recovery-target/healthy-promotion-report.json')) throw new Error('healthy promotion evidence missing');
+
+          fs.mkdirSync('artifacts/recovery-input', { recursive: true });
+          fs.copyFileSync('artifacts/recovery-target/healthy-promotion-report.json', 'artifacts/recovery-input/healthy-promotion-report.json');
+          fs.appendFileSync(process.env.GITHUB_ENV, `HNK_RECOVERY_TARGET_SHA=${targetSha}\n`);
+          fs.appendFileSync(process.env.GITHUB_ENV, `HNK_RECOVERY_INCIDENT_FINGERPRINT=${fingerprint}\n`);
+          fs.appendFileSync(process.env.GITHUB_STEP_SUMMARY, `\n## Exact Recovery Binding\n\n- Incident: \`${fingerprint}\`\n- Proven healthy SHA: \`${targetSha}\`\n- Disposition: **${discovery.recoveryDisposition}**\n- Operator confirmation remains required.\n\nTehkné Solutions\n`);
+          console.log(`recovery authorization binding: incident=${fingerprint} target=${targetSha} disposition=${discovery.recoveryDisposition}`);
+          NODE
+
       - name: Authorize exact recovery
         run: node .github/scripts/authorize-recovery.mjs
+
       - name: Upload recovery authorization evidence
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: recovery-authorization-${{ inputs.target_sha }}-${{ github.run_id }}
+          name: recovery-authorization-${{ github.run_id }}
           path: |
+            artifacts/promotion-input/recovery-gate.json
+            artifacts/promotion-input/recovery-gate.md
+            artifacts/recovery-target/recovery-target-discovery.json
+            artifacts/recovery-target/recovery-target-discovery.md
             artifacts/recovery-input/healthy-promotion-report.json
             artifacts/recovery-authorization/recovery-authorization.json
             artifacts/recovery-authorization/recovery-authorization.md
