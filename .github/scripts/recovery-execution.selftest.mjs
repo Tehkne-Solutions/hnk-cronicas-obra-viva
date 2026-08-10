@@ -9,8 +9,15 @@ const files = {
 
 const required = [
   [files.authorizationWorkflow, "AUTHORIZE_ROLLBACK"],
-  [files.authorizationWorkflow, "healthy-promotion-report.json"],
   [files.authorizationWorkflow, "environment: production"],
+  [files.authorizationWorkflow, "probe-recovery-gate.mjs"],
+  [files.authorizationWorkflow, "discover-recovery-target.mjs"],
+  [files.authorizationWorkflow, "rollback_to_verified_healthy_target"],
+  [files.authorizationWorkflow, "reassert_verified_healthy_target"],
+  [files.authorizationWorkflow, "HNK_RECOVERY_TARGET_SHA"],
+  [files.authorizationWorkflow, "HNK_RECOVERY_INCIDENT_FINGERPRINT"],
+  [files.authorizationWorkflow, "healthy-promotion-report.json"],
+  [files.authorizationWorkflow, "live gate/discovery incident mismatch"],
   [files.executorWorkflow, "recovery-authorization.yml"],
   [files.executorWorkflow, "/api/recovery"],
   [files.executorWorkflow, "rollback_recommended"],
@@ -31,5 +38,15 @@ const required = [
 for (const [source, token] of required) {
   if (!source.includes(token)) throw new Error(`recovery contract missing: ${token}`);
 }
+
+const forbiddenAuthorizationInputs = [
+  "inputs.target_sha",
+  "inputs.incident_fingerprint",
+  'target_sha:\n        description:',
+  'incident_fingerprint:\n        description:',
+];
+for (const token of forbiddenAuthorizationInputs) {
+  if (files.authorizationWorkflow.includes(token)) throw new Error(`recovery authorization must auto-discover exact binding: ${token}`);
+}
 if (files.executorWorkflow.includes("cancel-in-progress: true")) throw new Error("recovery must never cancel an in-progress rollback");
-console.log(`recovery-execution selftest: ${required.length} invariants PASS`);
+console.log(`recovery-execution selftest: ${required.length + forbiddenAuthorizationInputs.length + 1} invariants PASS`);
