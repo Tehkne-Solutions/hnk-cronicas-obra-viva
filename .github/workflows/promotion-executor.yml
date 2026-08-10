@@ -31,6 +31,7 @@ jobs:
       HNK_RENDER_DEPLOY_HOOK_URL: ${{ secrets.HNK_RENDER_DEPLOY_HOOK_URL }}
       HNK_GAME_PRODUCTION_URL: ${{ secrets.HNK_GAME_PRODUCTION_URL }}
       HNK_TELEMETRY_BASE_URL: ${{ secrets.HNK_TELEMETRY_BASE_URL }}
+      HNK_TELEMETRY_ADMIN_TOKEN: ${{ secrets.HNK_TELEMETRY_ADMIN_TOKEN }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -70,6 +71,10 @@ jobs:
           done
           test -n "$found" || { echo "Authorization $HNK_AUTHORIZATION_ID for candidate $HNK_CANDIDATE_ID not found" >&2; exit 1; }
 
+      - name: Enforce recovery gate before Render promotion
+        shell: bash
+        run: node .github/scripts/enforce-recovery-gate.mjs
+
       - name: Execute exact Render promotion and verify production
         shell: bash
         run: node .github/scripts/promote-release.mjs
@@ -85,6 +90,8 @@ jobs:
             artifacts/promotion-input/release-gate-report.json
             artifacts/promotion-input/ci-quality-report.json
             artifacts/promotion-input/release-smoke.json
+            artifacts/promotion-input/recovery-gate.json
+            artifacts/promotion-input/recovery-gate.md
             artifacts/promotion-report.json
             artifacts/promotion-report.md
           if-no-files-found: warn
