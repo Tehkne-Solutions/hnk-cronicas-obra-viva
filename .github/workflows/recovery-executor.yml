@@ -11,17 +11,21 @@ on:
         description: "Exact previously healthy SHA"
         required: true
         type: string
+  workflow_run:
+    workflows: ["recovery-authorization"]
+    types: [completed]
 
 permissions:
   actions: read
   contents: read
 
 concurrency:
-  group: recovery-${{ inputs.target_sha }}
+  group: recovery-${{ github.event.workflow_run.id || inputs.target_sha || github.run_id }}
   cancel-in-progress: false
 
 jobs:
   recover:
+    if: ${{ github.event_name == 'workflow_dispatch' || (github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'workflow_dispatch') }}
     runs-on: ubuntu-latest
     environment: production
     env:
@@ -40,32 +44,74 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
+
       - name: Locate exact recovery authorization evidence
         shell: bash
         run: |
           set -euo pipefail
           mkdir -p artifacts/recovery-execution-input /tmp/hnk-recovery-auth-search
-          found=""
-          runs=$(gh api "/repos/$GITHUB_REPOSITORY/actions/workflows/recovery-authorization.yml/runs?status=success&per_page=50" --jq '.workflow_runs[].id')
-          for run_id in $runs; do
-            artifact_id=$(gh api "/repos/$GITHUB_REPOSITORY/actions/runs/$run_id/artifacts" --jq '.artifacts | map(select(.expired == false and (.name | startswith("recovery-authorization-")))) | .[0].id // empty')
-            [ -n "$artifact_id" ] || continue
+
+          validate_and_bind() {
+            local auth="$1"
+            local healthy="$2"
+            local source_run="$3"
+            node - "$auth" "$healthy" "$source_run" <<'NODE'
+          const fs = require('fs');
+          const [authPath, healthyPath, sourceRun] = process.argv.slice(2);
+          const auth = JSON.parse(fs.readFileSync(authPath, 'utf8'));
+          const healthy = JSON.parse(fs.readFileSync(healthyPath, 'utf8'));
+          if (auth?.authorized !== true || auth?.decision !== 'authorized') throw new Error('recovery authorization is not authorized');
+          if (auth?.signature !== 'Tehkné Solutions') throw new Error('recovery authorization signature invalid');
+          if (!/^[0-9a-f]{40}$/i.test(auth?.targetSha ?? '')) throw new Error('recovery authorization target SHA invalid');
+          if (!/^[0-9a-f]{20}$/i.test(auth?.incidentFingerprint ?? '')) throw new Error('recovery authorization incident fingerprint invalid');
+          if (healthy?.status !== 'completed' || healthy?.candidateSha !== auth.targetSha || healthy?.verifiedManifest?.buildSha !== auth.targetSha) {
+            throw new Error('healthy promotion evidence does not prove authorized target');
+          }
+          if (healthy?.signature !== 'Tehkné Solutions' || healthy?.verifiedManifest?.signature !== 'Tehkné Solutions') {
+            throw new Error('healthy promotion evidence signature invalid');
+          }
+          fs.copyFileSync(authPath, 'artifacts/recovery-execution-input/recovery-authorization.json');
+          fs.copyFileSync(healthyPath, 'artifacts/recovery-execution-input/healthy-promotion-report.json');
+          fs.appendFileSync(process.env.GITHUB_ENV, `HNK_RECOVERY_AUTHORIZATION_ID=${auth.authorizationId}\n`);
+          fs.appendFileSync(process.env.GITHUB_ENV, `HNK_RECOVERY_TARGET_SHA=${auth.targetSha}\n`);
+          fs.appendFileSync(process.env.GITHUB_STEP_SUMMARY, `\n## Recovery Execution Binding\n\n- Source authorization run: **${sourceRun}**\n- Authorization: **${auth.authorizationId}**\n- Incident: \`${auth.incidentFingerprint}\`\n- Exact target: \`${auth.targetSha}\`\n\nTehkné Solutions\n`);
+          console.log(`recovery execution binding: run=${sourceRun} auth=${auth.authorizationId} target=${auth.targetSha}`);
+          NODE
+          }
+
+          if [ "$GITHUB_EVENT_NAME" = "workflow_run" ]; then
+            source_run='${{ github.event.workflow_run.id }}'
+            artifact_id=$(gh api "/repos/$GITHUB_REPOSITORY/actions/runs/$source_run/artifacts" --jq '.artifacts | map(select(.expired == false and (.name | startswith("recovery-authorization-")))) | .[0].id // empty')
+            test -n "$artifact_id" || { echo "No recovery authorization artifact on source run $source_run" >&2; exit 1; }
             rm -rf /tmp/hnk-recovery-auth-search/*
-            gh api "/repos/$GITHUB_REPOSITORY/actions/artifacts/$artifact_id/zip" > /tmp/hnk-recovery-auth.zip || continue
-            unzip -q /tmp/hnk-recovery-auth.zip -d /tmp/hnk-recovery-auth-search || continue
+            gh api "/repos/$GITHUB_REPOSITORY/actions/artifacts/$artifact_id/zip" > /tmp/hnk-recovery-auth.zip
+            unzip -q /tmp/hnk-recovery-auth.zip -d /tmp/hnk-recovery-auth-search
             auth=$(find /tmp/hnk-recovery-auth-search -name recovery-authorization.json -type f | head -n1 || true)
             healthy=$(find /tmp/hnk-recovery-auth-search -name healthy-promotion-report.json -type f | head -n1 || true)
-            [ -n "$auth" ] && [ -n "$healthy" ] || continue
-            ok=$(node -e 'const fs=require("fs");const x=JSON.parse(fs.readFileSync(process.argv[1],"utf8"));process.stdout.write(x.authorizationId===process.env.HNK_RECOVERY_AUTHORIZATION_ID&&x.targetSha===process.env.HNK_RECOVERY_TARGET_SHA&&x.authorized===true&&x.decision==="authorized"?"yes":"no")' "$auth")
-            if [ "$ok" = "yes" ]; then
-              cp "$auth" artifacts/recovery-execution-input/recovery-authorization.json
-              cp "$healthy" artifacts/recovery-execution-input/healthy-promotion-report.json
-              found="$run_id"
-              echo "source recovery authorization run: $run_id"
-              break
-            fi
-          done
-          test -n "$found" || { echo "Recovery authorization $HNK_RECOVERY_AUTHORIZATION_ID for $HNK_RECOVERY_TARGET_SHA not found" >&2; exit 1; }
+            test -n "$auth" && test -n "$healthy" || { echo "Source authorization evidence incomplete" >&2; exit 1; }
+            validate_and_bind "$auth" "$healthy" "$source_run"
+          else
+            found=""
+            runs=$(gh api "/repos/$GITHUB_REPOSITORY/actions/workflows/recovery-authorization.yml/runs?status=success&per_page=50" --jq '.workflow_runs[].id')
+            for run_id in $runs; do
+              artifact_id=$(gh api "/repos/$GITHUB_REPOSITORY/actions/runs/$run_id/artifacts" --jq '.artifacts | map(select(.expired == false and (.name | startswith("recovery-authorization-")))) | .[0].id // empty')
+              [ -n "$artifact_id" ] || continue
+              rm -rf /tmp/hnk-recovery-auth-search/*
+              gh api "/repos/$GITHUB_REPOSITORY/actions/artifacts/$artifact_id/zip" > /tmp/hnk-recovery-auth.zip || continue
+              unzip -q /tmp/hnk-recovery-auth.zip -d /tmp/hnk-recovery-auth-search || continue
+              auth=$(find /tmp/hnk-recovery-auth-search -name recovery-authorization.json -type f | head -n1 || true)
+              healthy=$(find /tmp/hnk-recovery-auth-search -name healthy-promotion-report.json -type f | head -n1 || true)
+              [ -n "$auth" ] && [ -n "$healthy" ] || continue
+              ok=$(node -e 'const fs=require("fs");const x=JSON.parse(fs.readFileSync(process.argv[1],"utf8"));process.stdout.write(x.authorizationId===process.env.HNK_RECOVERY_AUTHORIZATION_ID&&x.targetSha===process.env.HNK_RECOVERY_TARGET_SHA&&x.authorized===true&&x.decision==="authorized"?"yes":"no")' "$auth")
+              if [ "$ok" = "yes" ]; then
+                validate_and_bind "$auth" "$healthy" "$run_id"
+                found="$run_id"
+                break
+              fi
+            done
+            test -n "$found" || { echo "Recovery authorization $HNK_RECOVERY_AUTHORIZATION_ID for $HNK_RECOVERY_TARGET_SHA not found" >&2; exit 1; }
+          fi
+
       - name: Revalidate live Recovery Gate and authorized fingerprint
         shell: bash
         run: |
@@ -73,18 +119,21 @@ jobs:
           test -n "$HNK_TELEMETRY_BASE_URL" && test -n "$HNK_TELEMETRY_ADMIN_TOKEN"
           curl -fsS -H "Authorization: Bearer $HNK_TELEMETRY_ADMIN_TOKEN" "$HNK_TELEMETRY_BASE_URL/api/recovery" > artifacts/recovery-execution-input/recovery-gate.json
           node -e 'const fs=require("fs");const a=JSON.parse(fs.readFileSync("artifacts/recovery-execution-input/recovery-authorization.json","utf8"));const g=JSON.parse(fs.readFileSync("artifacts/recovery-execution-input/recovery-gate.json","utf8"));if(g.blocked!==true||g.decision!=="rollback_recommended")throw new Error(`live recovery gate is ${g.decision}`);if(!g.recommendations?.some(x=>x.fingerprint===a.incidentFingerprint))throw new Error("authorized incident is not currently blocking");console.log(`rollback still required for ${a.incidentFingerprint}`)'
+
       - name: Execute authorized recovery and verify exact release manifest
         run: node .github/scripts/execute-recovery.mjs
+
       - name: Validate telemetry control center after recovery
-        env:
-          HNK_BUILD_SHA: ${{ inputs.target_sha }}
-          HNK_RELEASE: recovery-post-smoke
-        run: node apps/telemetry-control/scripts/production-smoke.mjs > artifacts/recovery-post-smoke.json
+        shell: bash
+        run: |
+          set -euo pipefail
+          HNK_BUILD_SHA="$HNK_RECOVERY_TARGET_SHA" HNK_RELEASE=recovery-post-smoke node apps/telemetry-control/scripts/production-smoke.mjs > artifacts/recovery-post-smoke.json
+
       - name: Upload recovery evidence
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: recovery-${{ inputs.target_sha }}-${{ github.run_id }}
+          name: recovery-${{ github.run_id }}
           path: |
             artifacts/recovery-execution-input/recovery-authorization.json
             artifacts/recovery-execution-input/healthy-promotion-report.json

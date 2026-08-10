@@ -18,7 +18,16 @@ const required = [
   [files.authorizationWorkflow, "HNK_RECOVERY_INCIDENT_FINGERPRINT"],
   [files.authorizationWorkflow, "healthy-promotion-report.json"],
   [files.authorizationWorkflow, "live gate/discovery incident mismatch"],
-  [files.executorWorkflow, "recovery-authorization.yml"],
+  [files.executorWorkflow, 'workflow_run:'],
+  [files.executorWorkflow, 'workflows: ["recovery-authorization"]'],
+  [files.executorWorkflow, "github.event.workflow_run.conclusion == 'success'"],
+  [files.executorWorkflow, "github.event.workflow_run.event == 'workflow_dispatch'"],
+  [files.executorWorkflow, "github.event.workflow_run.id"],
+  [files.executorWorkflow, "Source authorization evidence incomplete"],
+  [files.executorWorkflow, "recovery authorization is not authorized"],
+  [files.executorWorkflow, "healthy promotion evidence does not prove authorized target"],
+  [files.executorWorkflow, "HNK_RECOVERY_AUTHORIZATION_ID"],
+  [files.executorWorkflow, "HNK_RECOVERY_TARGET_SHA"],
   [files.executorWorkflow, "/api/recovery"],
   [files.executorWorkflow, "rollback_recommended"],
   [files.executorWorkflow, "production-smoke.mjs"],
@@ -49,4 +58,5 @@ for (const token of forbiddenAuthorizationInputs) {
   if (files.authorizationWorkflow.includes(token)) throw new Error(`recovery authorization must auto-discover exact binding: ${token}`);
 }
 if (files.executorWorkflow.includes("cancel-in-progress: true")) throw new Error("recovery must never cancel an in-progress rollback");
-console.log(`recovery-execution selftest: ${required.length + forbiddenAuthorizationInputs.length + 1} invariants PASS`);
+if (!files.executorWorkflow.includes('github.event_name == \'workflow_dispatch\'')) throw new Error("manual recovery executor fallback must remain available");
+console.log(`recovery-execution selftest: ${required.length + forbiddenAuthorizationInputs.length + 2} invariants PASS`);
