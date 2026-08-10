@@ -7,6 +7,7 @@ on:
       - ".github/scripts/execute-recovery.mjs"
       - ".github/scripts/authorize-recovery.mjs"
       - ".github/scripts/recovery-runtime-smoke.mjs"
+      - ".github/scripts/recovery-authorization-provenance.selftest.mjs"
       - ".github/workflows/recovery-authorization.yml"
       - ".github/workflows/recovery-executor.yml"
       - ".github/workflows/recovery-contract-smoke.yml"
@@ -28,6 +29,8 @@ jobs:
           node-version: 22
       - name: Run static Recovery Execution invariants
         run: node .github/scripts/recovery-execution.selftest.mjs
+      - name: Run Recovery Authorization provenance self-test
+        run: node .github/scripts/recovery-authorization-provenance.selftest.mjs
       - name: Run non-destructive Recovery Runtime Smoke
         run: node .github/scripts/recovery-runtime-smoke.mjs
       - name: Upload recovery contract evidence
@@ -36,6 +39,8 @@ jobs:
         with:
           name: recovery-contract-smoke-${{ github.run_id }}-${{ github.run_attempt }}
           path: |
+            artifacts/recovery-authorization-provenance-selftest.json
+            artifacts/recovery-authorization-provenance-selftest.md
             artifacts/recovery-runtime-smoke.json
             artifacts/recovery-runtime-smoke.md
           if-no-files-found: error
