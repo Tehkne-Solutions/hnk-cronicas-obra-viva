@@ -1,0 +1,43 @@
+name: recovery-gate-smoke
+
+on:
+  workflow_dispatch:
+  pull_request:
+    branches: [main]
+    paths:
+      - ".github/workflows/recovery-gate-smoke.yml"
+      - ".github/scripts/enforce-recovery-gate.mjs"
+      - "apps/telemetry-control/**"
+
+permissions:
+  contents: read
+
+jobs:
+  validate-real-recovery-gate:
+    runs-on: ubuntu-latest
+    environment: production
+    env:
+      HNK_TELEMETRY_BASE_URL: ${{ secrets.HNK_TELEMETRY_BASE_URL }}
+      HNK_TELEMETRY_ADMIN_TOKEN: ${{ secrets.HNK_TELEMETRY_ADMIN_TOKEN }}
+      HNK_CANDIDATE_ID: recovery-gate-smoke
+      HNK_AUTHORIZATION_ID: recovery-gate-smoke
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Validate authenticated Recovery Gate without Render promotion
+        run: node .github/scripts/enforce-recovery-gate.mjs
+
+      - name: Upload recovery smoke evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: recovery-gate-smoke-${{ github.run_id }}
+          path: |
+            artifacts/promotion-input/recovery-gate.json
+            artifacts/promotion-input/recovery-gate.md
+          if-no-files-found: warn
+          retention-days: 30
