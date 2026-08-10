@@ -25,7 +25,7 @@ concurrency:
 
 jobs:
   recover:
-    if: ${{ github.event_name == 'workflow_dispatch' || (github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'workflow_dispatch') }}
+    if: ${{ (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main') || (github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'workflow_dispatch' && github.event.workflow_run.head_branch == 'main') }}
     runs-on: ubuntu-latest
     environment: production
     env:
@@ -38,9 +38,20 @@ jobs:
       HNK_TELEMETRY_ADMIN_TOKEN: ${{ secrets.HNK_TELEMETRY_ADMIN_TOKEN }}
       HNK_TELEMETRY_GAME_ORIGIN: ${{ secrets.HNK_TELEMETRY_GAME_ORIGIN }}
     steps:
+      - name: Require deterministic recovery executor snapshot
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ "$GITHUB_EVENT_NAME" = "workflow_run" ]; then
+            source_head='${{ github.event.workflow_run.head_sha }}'
+            test "$GITHUB_SHA" = "$source_head" || { echo "Main advanced after recovery authorization ($source_head -> $GITHUB_SHA); rerun recovery authorization on current main" >&2; exit 1; }
+          else
+            test "$GITHUB_REF" = "refs/heads/main" || { echo "Manual recovery executor must be dispatched from main; got $GITHUB_REF" >&2; exit 1; }
+          fi
+
       - uses: actions/checkout@v4
         with:
-          ref: main
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
       - uses: actions/setup-node@v4
         with:
           node-version: 22
@@ -55,15 +66,29 @@ jobs:
             local auth="$1"
             local healthy="$2"
             local source_run="$3"
-            node - "$auth" "$healthy" "$source_run" <<'NODE'
+            local source_event="$4"
+            local source_branch="$5"
+            local source_head_sha="$6"
+            local source_repo="$7"
+            node - "$auth" "$healthy" "$source_run" "$source_event" "$source_branch" "$source_head_sha" "$source_repo" <<'NODE'
           const fs = require('fs');
-          const [authPath, healthyPath, sourceRun] = process.argv.slice(2);
+          const [authPath, healthyPath, sourceRun, sourceEvent, sourceBranch, sourceHeadSha, sourceRepo] = process.argv.slice(2);
           const auth = JSON.parse(fs.readFileSync(authPath, 'utf8'));
           const healthy = JSON.parse(fs.readFileSync(healthyPath, 'utf8'));
+          const provenance = auth?.provenance ?? {};
           if (auth?.authorized !== true || auth?.decision !== 'authorized') throw new Error('recovery authorization is not authorized');
           if (auth?.signature !== 'Tehkné Solutions') throw new Error('recovery authorization signature invalid');
           if (!/^[0-9a-f]{40}$/i.test(auth?.targetSha ?? '')) throw new Error('recovery authorization target SHA invalid');
           if (!/^[0-9a-f]{20}$/i.test(auth?.incidentFingerprint ?? '')) throw new Error('recovery authorization incident fingerprint invalid');
+          if (sourceEvent !== 'workflow_dispatch') throw new Error(`recovery authorization source event invalid: ${sourceEvent}`);
+          if (sourceBranch !== 'main') throw new Error(`recovery authorization source branch invalid: ${sourceBranch}`);
+          if (!/^[0-9a-f]{40}$/i.test(sourceHeadSha ?? '')) throw new Error('recovery authorization source head SHA invalid');
+          if (sourceRepo !== process.env.GITHUB_REPOSITORY) throw new Error(`recovery authorization source repository mismatch: ${sourceRepo}`);
+          if (provenance?.authorizationWorkflow !== 'recovery-authorization') throw new Error('recovery authorization workflow provenance invalid');
+          if (String(provenance?.sourceWorkflowRunId ?? '') !== String(sourceRun)) throw new Error('recovery authorization source run mismatch');
+          if (provenance?.sourceRepository !== sourceRepo) throw new Error('recovery authorization provenance repository mismatch');
+          if (provenance?.sourceRef !== 'refs/heads/main') throw new Error(`recovery authorization provenance ref invalid: ${provenance?.sourceRef ?? 'missing'}`);
+          if (provenance?.sourceHeadSha !== sourceHeadSha) throw new Error('recovery authorization provenance head SHA mismatch');
           if (healthy?.status !== 'completed' || healthy?.candidateSha !== auth.targetSha || healthy?.verifiedManifest?.buildSha !== auth.targetSha) {
             throw new Error('healthy promotion evidence does not prove authorized target');
           }
@@ -74,13 +99,19 @@ jobs:
           fs.copyFileSync(healthyPath, 'artifacts/recovery-execution-input/healthy-promotion-report.json');
           fs.appendFileSync(process.env.GITHUB_ENV, `HNK_RECOVERY_AUTHORIZATION_ID=${auth.authorizationId}\n`);
           fs.appendFileSync(process.env.GITHUB_ENV, `HNK_RECOVERY_TARGET_SHA=${auth.targetSha}\n`);
-          fs.appendFileSync(process.env.GITHUB_STEP_SUMMARY, `\n## Recovery Execution Binding\n\n- Source authorization run: **${sourceRun}**\n- Authorization: **${auth.authorizationId}**\n- Incident: \`${auth.incidentFingerprint}\`\n- Exact target: \`${auth.targetSha}\`\n\nTehkné Solutions\n`);
-          console.log(`recovery execution binding: run=${sourceRun} auth=${auth.authorizationId} target=${auth.targetSha}`);
+          fs.appendFileSync(process.env.GITHUB_STEP_SUMMARY, `\n## Recovery Execution Binding\n\n- Source authorization run: **${sourceRun}**\n- Source branch: \`${sourceBranch}\`\n- Source head SHA: \`${sourceHeadSha}\`\n- Authorization: **${auth.authorizationId}**\n- Incident: \`${auth.incidentFingerprint}\`\n- Exact target: \`${auth.targetSha}\`\n\nTehkné Solutions\n`);
+          console.log(`recovery execution binding: run=${sourceRun} branch=${sourceBranch} head=${sourceHeadSha} auth=${auth.authorizationId} target=${auth.targetSha}`);
           NODE
           }
 
           if [ "$GITHUB_EVENT_NAME" = "workflow_run" ]; then
             source_run='${{ github.event.workflow_run.id }}'
+            source_event='${{ github.event.workflow_run.event }}'
+            source_branch='${{ github.event.workflow_run.head_branch }}'
+            source_head_sha='${{ github.event.workflow_run.head_sha }}'
+            source_repo="$GITHUB_REPOSITORY"
+            test "$source_event" = "workflow_dispatch" || { echo "Unexpected source event $source_event" >&2; exit 1; }
+            test "$source_branch" = "main" || { echo "Recovery authorization source branch must be main; got $source_branch" >&2; exit 1; }
             artifact_id=$(gh api "/repos/$GITHUB_REPOSITORY/actions/runs/$source_run/artifacts" --jq '.artifacts | map(select(.expired == false and (.name | startswith("recovery-authorization-")))) | .[0].id // empty')
             test -n "$artifact_id" || { echo "No recovery authorization artifact on source run $source_run" >&2; exit 1; }
             rm -rf /tmp/hnk-recovery-auth-search/*
@@ -88,12 +119,14 @@ jobs:
             unzip -q /tmp/hnk-recovery-auth.zip -d /tmp/hnk-recovery-auth-search
             auth=$(find /tmp/hnk-recovery-auth-search -name recovery-authorization.json -type f | head -n1 || true)
             healthy=$(find /tmp/hnk-recovery-auth-search -name healthy-promotion-report.json -type f | head -n1 || true)
-            test -n "$auth" && test -n "$healthy" || { echo "Source authorization evidence incomplete" >&2; exit 1; }
-            validate_and_bind "$auth" "$healthy" "$source_run"
+            test -n "$auth" && [ -n "$healthy" ] || { echo "Source authorization evidence incomplete" >&2; exit 1; }
+            validate_and_bind "$auth" "$healthy" "$source_run" "$source_event" "$source_branch" "$source_head_sha" "$source_repo"
           else
             found=""
             runs=$(gh api "/repos/$GITHUB_REPOSITORY/actions/workflows/recovery-authorization.yml/runs?status=success&per_page=50" --jq '.workflow_runs[].id')
             for run_id in $runs; do
+              IFS=$'\t' read -r source_event source_branch source_head_sha source_repo <<< "$(gh api "/repos/$GITHUB_REPOSITORY/actions/runs/$run_id" --jq '[.event,.head_branch,.head_sha,.repository.full_name] | @tsv')"
+              [ "$source_event" = "workflow_dispatch" ] && [ "$source_branch" = "main" ] && [ "$source_repo" = "$GITHUB_REPOSITORY" ] || continue
               artifact_id=$(gh api "/repos/$GITHUB_REPOSITORY/actions/runs/$run_id/artifacts" --jq '.artifacts | map(select(.expired == false and (.name | startswith("recovery-authorization-")))) | .[0].id // empty')
               [ -n "$artifact_id" ] || continue
               rm -rf /tmp/hnk-recovery-auth-search/*
@@ -104,7 +137,7 @@ jobs:
               [ -n "$auth" ] && [ -n "$healthy" ] || continue
               ok=$(node -e 'const fs=require("fs");const x=JSON.parse(fs.readFileSync(process.argv[1],"utf8"));process.stdout.write(x.authorizationId===process.env.HNK_RECOVERY_AUTHORIZATION_ID&&x.targetSha===process.env.HNK_RECOVERY_TARGET_SHA&&x.authorized===true&&x.decision==="authorized"?"yes":"no")' "$auth")
               if [ "$ok" = "yes" ]; then
-                validate_and_bind "$auth" "$healthy" "$run_id"
+                validate_and_bind "$auth" "$healthy" "$run_id" "$source_event" "$source_branch" "$source_head_sha" "$source_repo"
                 found="$run_id"
                 break
               fi

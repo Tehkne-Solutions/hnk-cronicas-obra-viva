@@ -30,9 +30,16 @@ jobs:
       HNK_CANDIDATE_ID: recovery-authorization
       HNK_AUTHORIZATION_ID: recovery-authorization
     steps:
+      - name: Require authorization workflow to run from main
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REF" = "refs/heads/main" || { echo "Recovery authorization must be dispatched from main; got $GITHUB_REF" >&2; exit 1; }
+          test "$GITHUB_REPOSITORY" = "Tehkne-Solutions/hnk-cronicas-obra-viva" || { echo "Unexpected recovery repository $GITHUB_REPOSITORY" >&2; exit 1; }
+
       - uses: actions/checkout@v4
         with:
-          ref: main
+          ref: ${{ github.sha }}
       - uses: actions/setup-node@v4
         with:
           node-version: 22
@@ -70,8 +77,8 @@ jobs:
           fs.copyFileSync('artifacts/recovery-target/healthy-promotion-report.json', 'artifacts/recovery-input/healthy-promotion-report.json');
           fs.appendFileSync(process.env.GITHUB_ENV, `HNK_RECOVERY_TARGET_SHA=${targetSha}\n`);
           fs.appendFileSync(process.env.GITHUB_ENV, `HNK_RECOVERY_INCIDENT_FINGERPRINT=${fingerprint}\n`);
-          fs.appendFileSync(process.env.GITHUB_STEP_SUMMARY, `\n## Exact Recovery Binding\n\n- Incident: \`${fingerprint}\`\n- Proven healthy SHA: \`${targetSha}\`\n- Disposition: **${discovery.recoveryDisposition}**\n- Operator confirmation remains required.\n\nTehkné Solutions\n`);
-          console.log(`recovery authorization binding: incident=${fingerprint} target=${targetSha} disposition=${discovery.recoveryDisposition}`);
+          fs.appendFileSync(process.env.GITHUB_STEP_SUMMARY, `\n## Exact Recovery Binding\n\n- Incident: \`${fingerprint}\`\n- Proven healthy SHA: \`${targetSha}\`\n- Authorization run: **${process.env.GITHUB_RUN_ID}**\n- Authorization ref: \`${process.env.GITHUB_REF}\`\n- Authorization head SHA: \`${process.env.GITHUB_SHA}\`\n- Disposition: **${discovery.recoveryDisposition}**\n- Operator confirmation remains required.\n\nTehkné Solutions\n`);
+          console.log(`recovery authorization binding: run=${process.env.GITHUB_RUN_ID} incident=${fingerprint} target=${targetSha} disposition=${discovery.recoveryDisposition}`);
           NODE
 
       - name: Authorize exact recovery
