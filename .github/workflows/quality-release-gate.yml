@@ -103,6 +103,12 @@ jobs:
         shell: bash
         run: node .github/scripts/release-gate.mjs
 
+      - name: Publish Quality Gate outcome to Operational Control
+        if: always()
+        env:
+          HNK_QUALITY_GATE_OUTCOME: ${{ steps.release_gate.outcome }}
+        run: node .github/scripts/publish-quality-gate-outcome.mjs
+
       - name: Upload release gate evidence
         if: always()
         uses: actions/upload-artifact@v4
