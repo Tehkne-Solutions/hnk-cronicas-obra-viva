@@ -1,0 +1,44 @@
+name: executive-health-production-smoke
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "17 */6 * * *"
+  workflow_run:
+    workflows: [foundation]
+    types: [completed]
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: executive-health-production-smoke
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    if: ${{ github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success' }}
+    runs-on: ubuntu-latest
+    env:
+      HNK_TELEMETRY_BASE_URL: ${{ secrets.HNK_TELEMETRY_BASE_URL }}
+      HNK_TELEMETRY_ADMIN_TOKEN: ${{ secrets.HNK_TELEMETRY_ADMIN_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Validate Executive Health contract in production
+        run: node apps/telemetry-control/scripts/executive-health-production-smoke.mjs
+      - name: Upload Executive Health evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: executive-health-production-smoke-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            artifacts/executive-health-production-smoke.json
+            artifacts/executive-health-production-smoke.md
+          if-no-files-found: warn
+          retention-days: 90
