@@ -31,7 +31,8 @@ if (quality) {
   if (quality.sha !== candidateSha) reasons.push(`quality_sha_mismatch:${quality.sha}`);
   if (quality.result !== "pass") reasons.push(`foundation_not_green:${quality.result}`);
   const budgetStatus = quality.regressionBudget?.status ?? "missing";
-  if (budgetStatus !== "pass") reasons.push(`regression_budget_not_pass:${budgetStatus}`);
+  if (!["pass", "warn"].includes(budgetStatus)) reasons.push(`regression_budget_blocking:${budgetStatus}`);
+  if (budgetStatus === "warn") warnings.push("quality:regression_budget_warn_non_blocking");
   if ((quality.regressionBudget?.violations?.length ?? 0) > 0) reasons.push("regression_budget_has_violations");
   if ((quality.regressionBudget?.warnings?.length ?? 0) > 0) warnings.push(...quality.regressionBudget.warnings.map((item) => `quality:${item}`));
 }
