@@ -6,6 +6,7 @@ import type { TelemetryAlertManager } from "./alerting.js";
 import { renderDashboard } from "./dashboard.js";
 import { renderPromotionDashboard } from "./promotion-dashboard.js";
 import { renderIncidentDashboard } from "./incident-dashboard.js";
+import { buildRecoveryGateSnapshot } from "./recovery-gate.js";
 
 export interface ControlCenterConfig {
   readonly store: TelemetryStore;
@@ -72,6 +73,7 @@ export function createControlCenterServer(config: ControlCenterConfig) {
       }
       if (req.method === "GET" && url.pathname === "/health") { const health = await config.store.health(); json(res, health.ok ? 200 : 503, { ok: health.ok, storage: health.mode, release: config.release, buildSha: config.buildSha, uptimeSeconds: Math.round(process.uptime()) }); return; }
       if (req.method === "GET" && url.pathname === "/api/snapshot") { if (!requireAdmin(req, res)) return; const hours = Math.min(168, Math.max(1, Number(url.searchParams.get("hours") ?? 24))); json(res, 200, await snapshot(hours)); return; }
+      if (req.method === "GET" && url.pathname === "/api/recovery") { if (!requireAdmin(req, res)) return; const hours = Math.min(168, Math.max(1, Number(url.searchParams.get("hours") ?? 168))); json(res, 200, buildRecoveryGateSnapshot(await snapshot(hours))); return; }
       if (req.method === "GET" && url.pathname === "/promotions") { if (!requireAdmin(req, res)) return; const health = await config.store.health(); const hours = Math.min(168, Math.max(1, Number(url.searchParams.get("hours") ?? 24))); text(res, 200, renderPromotionDashboard(await snapshot(hours), { mode: health.mode, release: config.release }), "text/html; charset=utf-8"); return; }
       if (req.method === "GET" && url.pathname === "/incidents") { if (!requireAdmin(req, res)) return; const health = await config.store.health(); const hours = Math.min(168, Math.max(1, Number(url.searchParams.get("hours") ?? 168))); text(res, 200, renderIncidentDashboard(await snapshot(hours), { mode: health.mode, release: config.release }), "text/html; charset=utf-8"); return; }
       if (req.method === "GET" && (url.pathname === "/" || url.pathname === "/control")) { if (!requireAdmin(req, res)) return; const health = await config.store.health(); text(res, 200, renderDashboard(await snapshot(24), { mode: health.mode, release: config.release, retentionDays: config.retentionDays }), "text/html; charset=utf-8"); return; }
