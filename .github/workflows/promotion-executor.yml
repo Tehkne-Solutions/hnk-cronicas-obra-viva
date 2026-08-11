@@ -22,26 +22,27 @@ concurrency:
 
 jobs:
   promote:
+    if: ${{ github.ref == 'refs/heads/main' }}
     runs-on: ubuntu-latest
     environment: production
     env:
       GH_TOKEN: ${{ github.token }}
       HNK_AUTHORIZATION_ID: ${{ inputs.authorization_id }}
       HNK_CANDIDATE_ID: ${{ inputs.candidate_id }}
+      HNK_PROMOTION_HEAD_SHA: ${{ github.sha }}
       HNK_RENDER_DEPLOY_HOOK_URL: ${{ secrets.HNK_RENDER_DEPLOY_HOOK_URL }}
       HNK_GAME_PRODUCTION_URL: ${{ secrets.HNK_GAME_PRODUCTION_URL }}
       HNK_TELEMETRY_BASE_URL: ${{ secrets.HNK_TELEMETRY_BASE_URL }}
       HNK_TELEMETRY_ADMIN_TOKEN: ${{ secrets.HNK_TELEMETRY_ADMIN_TOKEN }}
     steps:
-      - uses: actions/checkout@v4
-        with:
-          ref: main
+      - name: Require promotion dispatch from main
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REF" = "refs/heads/main" || { echo "Promotion must be dispatched from main; got $GITHUB_REF" >&2; exit 1; }
+          test "$GITHUB_REPOSITORY" = "Tehkne-Solutions/hnk-cronicas-obra-viva" || { echo "Unexpected promotion repository $GITHUB_REPOSITORY" >&2; exit 1; }
 
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-
-      - name: Locate exact deployment authorization evidence
+      - name: Locate exact deployment authorization evidence and provenance
         shell: bash
         run: |
           set -euo pipefail
@@ -49,6 +50,8 @@ jobs:
           found=""
           runs=$(gh api "/repos/$GITHUB_REPOSITORY/actions/workflows/deployment-authorization.yml/runs?status=success&per_page=50" --jq '.workflow_runs[].id')
           for run_id in $runs; do
+            IFS=$'\t' read -r source_event source_branch source_head_sha source_repo <<< "$(gh api "/repos/$GITHUB_REPOSITORY/actions/runs/$run_id" --jq '[.event,.head_branch,.head_sha,.repository.full_name] | @tsv')"
+            [ "$source_event" = "workflow_dispatch" ] && [ "$source_branch" = "main" ] && [ "$source_repo" = "$GITHUB_REPOSITORY" ] || continue
             artifact_id=$(gh api "/repos/$GITHUB_REPOSITORY/actions/runs/$run_id/artifacts" --jq '.artifacts | map(select(.expired == false and (.name | startswith("deployment-authorization-")))) | .[0].id // empty')
             [ -n "$artifact_id" ] || continue
             rm -rf /tmp/hnk-promotion-search/*
@@ -56,9 +59,30 @@ jobs:
             unzip -q /tmp/hnk-promotion.zip -d /tmp/hnk-promotion-search || continue
             auth_file=$(find /tmp/hnk-promotion-search -name deployment-authorization.json -type f | head -n1 || true)
             [ -n "$auth_file" ] || continue
-            auth_id=$(node -e 'const fs=require("fs");const x=JSON.parse(fs.readFileSync(process.argv[1],"utf8"));process.stdout.write(x.authorizationId||"")' "$auth_file")
-            candidate_id=$(node -e 'const fs=require("fs");const x=JSON.parse(fs.readFileSync(process.argv[1],"utf8"));process.stdout.write(x.candidateId||"")' "$auth_file")
-            if [ "$auth_id" = "$HNK_AUTHORIZATION_ID" ] && [ "$candidate_id" = "$HNK_CANDIDATE_ID" ]; then
+            match=$(node - "$auth_file" "$run_id" "$source_event" "$source_branch" "$source_head_sha" "$source_repo" <<'NODE'
+          const fs = require('fs');
+          const [authPath, runId, event, branch, headSha, repo] = process.argv.slice(2);
+          const a = JSON.parse(fs.readFileSync(authPath, 'utf8'));
+          const p = a?.provenance ?? {};
+          const ok = a.authorizationId === process.env.HNK_AUTHORIZATION_ID
+            && a.candidateId === process.env.HNK_CANDIDATE_ID
+            && a.authorized === true
+            && a.decision === 'authorized'
+            && a.environment === 'production'
+            && a.signature === 'Tehkné Solutions'
+            && p.authorizationWorkflow === 'deployment-authorization'
+            && String(p.sourceWorkflowRunId ?? '') === String(runId)
+            && p.sourceRepository === repo
+            && p.sourceRef === 'refs/heads/main'
+            && p.sourceHeadSha === headSha
+            && event === 'workflow_dispatch'
+            && branch === 'main'
+            && repo === process.env.GITHUB_REPOSITORY
+            && a.candidateSha === headSha;
+          process.stdout.write(ok ? 'yes' : 'no');
+          NODE
+            )
+            if [ "$match" = "yes" ]; then
               for name in deployment-authorization.json release-candidate.json release-gate-report.json ci-quality-report.json release-smoke.json; do
                 source_file=$(find /tmp/hnk-promotion-search -name "$name" -type f | head -n1 || true)
                 test -n "$source_file" || { echo "authorization artifact missing $name" >&2; exit 1; }
@@ -66,18 +90,42 @@ jobs:
               done
               found="$run_id"
               echo "source authorization run: $run_id"
+              echo "source authorization head: $source_head_sha"
               break
             fi
           done
-          test -n "$found" || { echo "Authorization $HNK_AUTHORIZATION_ID for candidate $HNK_CANDIDATE_ID not found" >&2; exit 1; }
+          test -n "$found" || { echo "Authorization $HNK_AUTHORIZATION_ID for candidate $HNK_CANDIDATE_ID with valid main provenance not found" >&2; exit 1; }
+
+      - name: Require authorization snapshot to equal dispatch and current main
+        shell: bash
+        run: |
+          set -euo pipefail
+          candidate_sha=$(node -e 'const fs=require("fs");const a=JSON.parse(fs.readFileSync("artifacts/promotion-input/deployment-authorization.json","utf8"));process.stdout.write(a.candidateSha||"")')
+          current_main=$(gh api "/repos/$GITHUB_REPOSITORY/commits/main" --jq '.sha')
+          test "$candidate_sha" = "$GITHUB_SHA" || { echo "Promotion dispatch SHA $GITHUB_SHA does not match authorized candidate $candidate_sha" >&2; exit 1; }
+          test "$candidate_sha" = "$current_main" || { echo "Candidate superseded since authorization: $candidate_sha -> $current_main" >&2; exit 1; }
+
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
 
       - name: Enforce recovery gate before Render promotion
         shell: bash
         run: node .github/scripts/enforce-recovery-gate.mjs
 
-      - name: Execute exact Render promotion and verify production
+      - name: Revalidate main and execute exact Render promotion
         shell: bash
-        run: node .github/scripts/promote-release.mjs
+        run: |
+          set -euo pipefail
+          candidate_sha=$(node -e 'const fs=require("fs");const a=JSON.parse(fs.readFileSync("artifacts/promotion-input/deployment-authorization.json","utf8"));process.stdout.write(a.candidateSha||"")')
+          current_main=$(gh api "/repos/$GITHUB_REPOSITORY/commits/main" --jq '.sha')
+          test "$candidate_sha" = "$GITHUB_SHA" || { echo "Promotion snapshot mismatch: $GITHUB_SHA != $candidate_sha" >&2; exit 1; }
+          test "$candidate_sha" = "$current_main" || { echo "Candidate superseded immediately before Render promotion: $candidate_sha -> $current_main" >&2; exit 1; }
+          HNK_CURRENT_MAIN_SHA="$current_main" node .github/scripts/promote-release.mjs
 
       - name: Upload promotion evidence
         if: always()
