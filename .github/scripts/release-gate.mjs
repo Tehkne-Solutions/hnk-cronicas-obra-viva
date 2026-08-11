@@ -10,6 +10,8 @@ const smokePath = resolve(root, process.env.HNK_SMOKE_REPORT_PATH ?? "artifacts/
 const outDir = resolve(root, "artifacts");
 const ttlHoursRaw = Number(process.env.HNK_RELEASE_CANDIDATE_TTL_HOURS ?? 24);
 const ttlHours = Number.isFinite(ttlHoursRaw) && ttlHoursRaw > 0 ? ttlHoursRaw : 24;
+const recoveryHoursRaw = Number(process.env.HNK_RECOVERY_GATE_HOURS ?? 168);
+const recoveryHours = Number.isFinite(recoveryHoursRaw) && recoveryHoursRaw > 0 ? Math.min(168, recoveryHoursRaw) : 168;
 const gateMode = (process.env.HNK_RELEASE_GATE_MODE ?? "production").toLowerCase() === "preview" ? "preview" : "production";
 
 const reasons = [];
@@ -43,6 +45,7 @@ if (smoke && smoke.ok !== true) reasons.push("production_smoke_failed");
 
 let health = null;
 let snapshot = null;
+let recoveryGate = null;
 if (!baseUrl || !adminToken) {
   reasons.push("control_center_not_configured");
 } else {
@@ -53,13 +56,23 @@ if (!baseUrl || !adminToken) {
       if (gateMode === "production") reasons.push("control_center_not_persistent");
       else warnings.push("preview_storage_memory_nonpersistent");
     }
-    snapshot = await jsonFetch("/api/snapshot?hours=6", { headers: { authorization: `Bearer ${adminToken}` } });
+    const headers = { authorization: `Bearer ${adminToken}` };
+    snapshot = await jsonFetch("/api/snapshot?hours=6", { headers });
+    if (gateMode === "production") {
+      recoveryGate = await jsonFetch(`/api/recovery?hours=${recoveryHours}`, { headers });
+      if (recoveryGate?.schemaVersion !== 1 || typeof recoveryGate?.blocked !== "boolean" || typeof recoveryGate?.decision !== "string") {
+        reasons.push("recovery_gate_contract_invalid");
+      } else if (recoveryGate.blocked) {
+        const fingerprint = recoveryGate?.recommendations?.[0]?.fingerprint;
+        reasons.push(`recovery_gate_blocked:${recoveryGate.decision}:${fingerprint ?? "unknown"}`);
+      }
+    }
   } catch (error) {
     reasons.push(`control_center_unreachable:${error instanceof Error ? error.message : String(error)}`);
   }
 }
 
-const ignoredSession = (sessionId) => typeof sessionId === "string" && (sessionId.startsWith("smoke.") || sessionId.startsWith("ci."));
+const ignoredSession = (sessionId) => typeof sessionId === "string" && (sessionId.startsWith("smoke.") || sessionId.startsWith("ci.") || sessionId.startsWith("release."));
 const criticalFindings = Array.isArray(snapshot?.diagnostics)
   ? snapshot.diagnostics.filter((finding) => (finding?.level === "fatal" || finding?.level === "error") && !ignoredSession(finding?.sessionId))
   : [];
@@ -82,6 +95,9 @@ const report = {
     productionSmoke: smoke?.ok === true ? "pass" : "unknown",
     controlCenter: health?.ok === true ? "healthy" : "unknown",
     storage: health?.storage ?? "unknown",
+    recoveryGate: gateMode === "production" ? recoveryGate?.decision ?? "unknown" : "not_applicable",
+    recoveryBlocked: gateMode === "production" ? recoveryGate?.blocked ?? null : false,
+    activeRecoveryIncidents: gateMode === "production" ? Number(recoveryGate?.activeIncidents ?? 0) : 0,
     criticalDiagnostics: criticalFindings.length,
     recentProductionFatals: productionFatals.length,
   },
@@ -115,6 +131,8 @@ if (eligible) {
       productionSmokeSessionId: smoke?.smokeSessionId ?? null,
       productionSmokeDiagnostic: smoke?.diagnostic ?? null,
       controlCenterStorage: health?.storage ?? null,
+      recoveryGate: report.signals.recoveryGate,
+      activeRecoveryIncidents: report.signals.activeRecoveryIncidents,
       criticalDiagnostics: criticalFindings.length,
       recentProductionFatals: productionFatals.length,
     },
@@ -133,6 +151,7 @@ const md = [
   `- Regression Budget: **${report.signals.regressionBudget}**`,
   `- Production Smoke: **${report.signals.productionSmoke}**`,
   `- Control Center: **${report.signals.controlCenter}** (${report.signals.storage})`,
+  `- Recovery Gate: **${report.signals.recoveryGate}** · blocked=${String(report.signals.recoveryBlocked)} · active=${report.signals.activeRecoveryIncidents}`,
   releaseCandidate ? `- Release Candidate: **${releaseCandidate.candidateId}** · válido até ${releaseCandidate.expiresAt}` : "- Release Candidate: **não emitido**",
   "",
   reasons.length ? `## Blocking reasons\n${reasons.map((item) => `- ${item}`).join("\n")}` : "## Blocking reasons\n- none",
@@ -152,7 +171,7 @@ if (baseUrl) {
     name: gateMode === "preview" ? "preview_release_gate_decision" : "release_gate_decision",
     level: eligible ? "info" : "error",
     sessionId: `release.${candidateSha.slice(0, 12)}`,
-    data: { candidateSha, gateMode, decision: report.decision, reasons, warnings, storage: report.signals.storage },
+    data: { candidateSha, gateMode, decision: report.decision, reasons, warnings, storage: report.signals.storage, recoveryGate: report.signals.recoveryGate, activeRecoveryIncidents: report.signals.activeRecoveryIncidents },
   }];
   if (releaseCandidate) events.push({
     schemaVersion: 1,
