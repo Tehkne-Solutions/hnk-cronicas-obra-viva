@@ -39,9 +39,16 @@ jobs:
       HNK_TELEMETRY_BASE_URL: ${{ secrets.HNK_TELEMETRY_BASE_URL }}
       HNK_TELEMETRY_ADMIN_TOKEN: ${{ secrets.HNK_TELEMETRY_ADMIN_TOKEN }}
     steps:
+      - name: Require deployment authorization from main
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REF" = "refs/heads/main" || { echo "Deployment authorization must be dispatched from main; got $GITHUB_REF" >&2; exit 1; }
+          test "$GITHUB_REPOSITORY" = "Tehkne-Solutions/hnk-cronicas-obra-viva" || { echo "Unexpected deployment repository $GITHUB_REPOSITORY" >&2; exit 1; }
+
       - uses: actions/checkout@v4
         with:
-          ref: main
+          ref: ${{ github.sha }}
 
       - uses: actions/setup-node@v4
         with:
@@ -55,6 +62,7 @@ jobs:
           test -n "$sha"
           echo "HNK_CURRENT_MAIN_SHA=$sha" >> "$GITHUB_ENV"
           echo "current main: $sha"
+          test "$sha" = "$GITHUB_SHA" || { echo "Main advanced after authorization dispatch ($GITHUB_SHA -> $sha); rerun authorization on current main" >&2; exit 1; }
 
       - name: Locate immutable Release Candidate evidence
         shell: bash
