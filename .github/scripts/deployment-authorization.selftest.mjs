@@ -11,6 +11,7 @@ await mkdir(inputDir, { recursive: true });
 
 const sha = "c".repeat(40);
 const candidateId = "rc.test.warn-policy";
+let recoveryBlocked = false;
 
 const server = createServer((req, res) => {
   const url = new URL(req.url ?? "/", "http://127.0.0.1");
@@ -22,6 +23,11 @@ const server = createServer((req, res) => {
   if (req.method === "GET" && url.pathname === "/api/snapshot") {
     res.writeHead(200, { "content-type": "application/json" });
     res.end(JSON.stringify({ diagnostics: [], recentEvents: [] }));
+    return;
+  }
+  if (req.method === "GET" && url.pathname === "/api/recovery") {
+    res.writeHead(200, { "content-type": "application/json" });
+    res.end(JSON.stringify({ schemaVersion: 1, blocked: recoveryBlocked, decision: recoveryBlocked ? "rollback_recommended" : "clear", activeIncidents: recoveryBlocked ? 1 : 0, recommendations: recoveryBlocked ? [{ fingerprint: "f".repeat(20) }] : [] }));
     return;
   }
   if (req.method === "POST" && url.pathname === "/v1/telemetry") {
@@ -52,12 +58,14 @@ async function writeScenario(candidateBudget, qualityBudget) {
       regressionBudget: candidateBudget,
       productionSmokeSessionId: "smoke.test",
       controlCenterStorage: "sqlite",
+      recoveryGate: "clear",
+      activeRecoveryIncidents: 0,
       criticalDiagnostics: 0,
       recentProductionFatals: 0,
     },
     signature: "Tehkné Solutions",
   };
-  const gate = { schemaVersion: 1, gateMode: "production", candidateSha: sha, eligible: true, decision: "eligible", reasons: [], warnings: candidateBudget === "warn" ? ["quality:regression_budget_warn_non_blocking"] : [] };
+  const gate = { schemaVersion: 1, gateMode: "production", candidateSha: sha, eligible: true, decision: "eligible", reasons: [], warnings: candidateBudget === "warn" ? ["quality:regression_budget_warn_non_blocking"] : [], signals: { recoveryBlocked: false } };
   const quality = { sha, result: "pass", regressionBudget: { status: qualityBudget, violations: [], warnings: qualityBudget === "warn" ? ["duration_regression"] : [] } };
   const smoke = { ok: true, smokeSessionId: "smoke.test" };
   for (const [name, value] of [["release-candidate.json", candidate], ["release-gate-report.json", gate], ["ci-quality-report.json", quality], ["release-smoke.json", smoke]]) {
@@ -84,6 +92,10 @@ async function run(expectSuccess) {
         HNK_TELEMETRY_BASE_URL: baseUrl,
         HNK_TELEMETRY_ADMIN_TOKEN: "test-token",
         GITHUB_ACTOR: "selftest",
+        GITHUB_RUN_ID: "123456789",
+        GITHUB_REPOSITORY: "Tehkne-Solutions/hnk-cronicas-obra-viva",
+        GITHUB_REF: "refs/heads/main",
+        GITHUB_SHA: sha,
       },
     });
     child.once("error", reject);
@@ -94,16 +106,24 @@ async function run(expectSuccess) {
 }
 
 try {
+  recoveryBlocked = false;
   await writeScenario("warn", "warn");
   const allowed = await run(true);
   if (allowed.authorized !== true || allowed.decision !== "authorized") throw new Error("matching non-blocking warning was not authorized");
   if (!allowed.warnings?.includes("candidate:regression_budget_warn_non_blocking") || !allowed.warnings?.includes("quality:regression_budget_warn_non_blocking")) throw new Error("warning evidence missing from authorization");
+  if (allowed.provenance?.sourceHeadSha !== sha || allowed.provenance?.sourceRef !== "refs/heads/main" || allowed.provenance?.sourceWorkflowRunId !== "123456789") throw new Error("deployment authorization provenance missing");
+  if (allowed.evidence?.activeRecoveryIncidents !== 0 || allowed.evidence?.recoveryGate !== "clear") throw new Error("clear recovery evidence missing");
 
   await writeScenario("warn", "pass");
   const mismatch = await run(false);
   if (mismatch.authorized !== false || !mismatch.failures?.some((item) => item.startsWith("candidate_quality_budget_mismatch:"))) throw new Error("candidate/quality budget mismatch was not rejected");
 
-  console.log("deployment authorization warning policy self-test: PASS");
+  recoveryBlocked = true;
+  await writeScenario("pass", "pass");
+  const blocked = await run(false);
+  if (blocked.authorized !== false || !blocked.failures?.some((item) => item.startsWith("recovery_gate_blocked:"))) throw new Error("live Recovery Gate did not block deployment authorization");
+
+  console.log("deployment authorization warning/recovery/provenance self-test: PASS");
 } finally {
   await new Promise((resolveClose) => server.close(resolveClose));
   await rm(temp, { recursive: true, force: true });

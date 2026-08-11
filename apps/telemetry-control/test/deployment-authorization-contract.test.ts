@@ -32,12 +32,20 @@ async function writeFixture(dir: string, sha = "a".repeat(40)) {
       productionSmokeSessionId: "smoke.1",
       productionSmokeDiagnostic: "error_storm",
       controlCenterStorage: "postgres",
+      recoveryGate: "clear",
+      activeRecoveryIncidents: 0,
       criticalDiagnostics: 0,
       recentProductionFatals: 0,
     },
     signature: "Tehkné Solutions",
   };
-  const gate = { candidateSha: sha, eligible: true, decision: "eligible", reasons: [] };
+  const gate = {
+    candidateSha: sha,
+    eligible: true,
+    decision: "eligible",
+    reasons: [],
+    signals: { recoveryGate: "clear", recoveryBlocked: false, activeRecoveryIncidents: 0 },
+  };
   const quality = { sha, result: "pass", regressionBudget: { status: "pass", violations: [], warnings: [] } };
   const smoke = { ok: true, smokeSessionId: "smoke.1", diagnostic: "error_storm" };
   await Promise.all([
@@ -60,6 +68,11 @@ async function fakeControlCenter() {
     if (req.url?.startsWith("/api/snapshot")) {
       res.setHeader("content-type", "application/json");
       res.end(JSON.stringify({ diagnostics: [], recentEvents: [] }));
+      return;
+    }
+    if (req.url?.startsWith("/api/recovery")) {
+      res.setHeader("content-type", "application/json");
+      res.end(JSON.stringify({ schemaVersion: 1, blocked: false, decision: "clear", activeIncidents: 0, recommendations: [] }));
       return;
     }
     if (req.url === "/v1/telemetry" && req.method === "POST") {
@@ -92,6 +105,15 @@ async function runContract(cwd: string, env: Record<string, string>) {
   });
 }
 
+function provenanceEnv(sha: string) {
+  return {
+    GITHUB_RUN_ID: "123456789",
+    GITHUB_REPOSITORY: "Tehkne-Solutions/hnk-cronicas-obra-viva",
+    GITHUB_REF: "refs/heads/main",
+    GITHUB_SHA: sha,
+  };
+}
+
 describe("deployment authorization contract", () => {
   it("authorizes only the exact active immutable Release Candidate", async () => {
     const dir = await mkdtemp(join(tmpdir(), "hnk-deploy-auth-"));
@@ -111,6 +133,7 @@ describe("deployment authorization contract", () => {
         HNK_TELEMETRY_BASE_URL: control.baseUrl,
         HNK_TELEMETRY_ADMIN_TOKEN: "test-token",
         GITHUB_ACTOR: "release-operator",
+        ...provenanceEnv(candidate.candidateSha),
       });
       expect(result.code).toBe(0);
       const authorization = JSON.parse(await readFile(join(dir, "artifacts/deployment-authorization.json"), "utf8"));
@@ -118,6 +141,15 @@ describe("deployment authorization contract", () => {
       expect(authorization.candidateId).toBe(candidate.candidateId);
       expect(authorization.authorizedBy).toBe("release-operator");
       expect(authorization.evidenceFingerprint).toMatch(/^sha256:/);
+      expect(authorization.evidence.recoveryGate).toBe("clear");
+      expect(authorization.evidence.activeRecoveryIncidents).toBe(0);
+      expect(authorization.provenance).toMatchObject({
+        authorizationWorkflow: "deployment-authorization",
+        sourceWorkflowRunId: "123456789",
+        sourceRepository: "Tehkne-Solutions/hnk-cronicas-obra-viva",
+        sourceRef: "refs/heads/main",
+        sourceHeadSha: candidate.candidateSha,
+      });
       expect(authorization.failures).toEqual([]);
       expect(control.received).toHaveLength(1);
     } finally {
@@ -139,9 +171,11 @@ describe("deployment authorization contract", () => {
         HNK_CANDIDATE_ID: candidate.candidateId,
         HNK_CURRENT_MAIN_SHA: "c".repeat(40),
         HNK_AUTHORIZATION_REASON: "Should be rejected",
+        HNK_DEPLOYMENT_ENVIRONMENT: "production",
         HNK_TELEMETRY_BASE_URL: control.baseUrl,
         HNK_TELEMETRY_ADMIN_TOKEN: "test-token",
         GITHUB_ACTOR: "release-operator",
+        ...provenanceEnv(candidate.candidateSha),
       });
       expect(result.code).toBe(1);
       const authorization = JSON.parse(await readFile(join(dir, "artifacts/deployment-authorization.json"), "utf8"));

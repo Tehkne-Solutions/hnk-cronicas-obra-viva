@@ -1,0 +1,55 @@
+name: release-cycle-contract-smoke
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - ".github/scripts/release-gate.mjs"
+      - ".github/scripts/authorize-deployment.mjs"
+      - ".github/scripts/promote-release.mjs"
+      - ".github/scripts/release-cycle-closure.selftest.mjs"
+      - ".github/scripts/release-gate-recovery.selftest.mjs"
+      - ".github/scripts/deployment-authorization.selftest.mjs"
+      - ".github/scripts/promotion-executor.selftest.mjs"
+      - ".github/workflows/quality-release-gate.yml"
+      - ".github/workflows/deployment-authorization.yml"
+      - ".github/workflows/promotion-executor.yml"
+      - ".github/workflows/release-cycle-contract-smoke.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-cycle-contract-smoke-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Validate release cycle static invariants
+        run: node .github/scripts/release-cycle-closure.selftest.mjs
+      - name: Validate Recovery Gate blocks RC emission
+        run: node .github/scripts/release-gate-recovery.selftest.mjs
+      - name: Validate deployment authorization recovery and provenance
+        run: node .github/scripts/deployment-authorization.selftest.mjs
+      - name: Validate promotion provenance and stale-candidate rejection
+        run: node .github/scripts/promotion-executor.selftest.mjs
+      - name: Upload release cycle contract evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-cycle-contract-smoke-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            artifacts/release-gate-report.json
+            artifacts/release-candidate.json
+            artifacts/deployment-authorization.json
+            artifacts/deployment-authorization.md
+            artifacts/promotion-report.json
+            artifacts/promotion-report.md
+          if-no-files-found: warn
+          retention-days: 90

@@ -16,6 +16,8 @@ const productionUrl = (process.env.HNK_GAME_PRODUCTION_URL ?? "").replace(/\/$/,
 const telemetryBaseUrl = (process.env.HNK_TELEMETRY_BASE_URL ?? "").replace(/\/$/, "");
 const requestedAuthorizationId = process.env.HNK_AUTHORIZATION_ID ?? "";
 const requestedCandidateId = process.env.HNK_CANDIDATE_ID ?? "";
+const promotionHeadSha = (process.env.HNK_PROMOTION_HEAD_SHA ?? process.env.GITHUB_SHA ?? "").trim();
+const currentMainSha = (process.env.HNK_CURRENT_MAIN_SHA ?? "").trim();
 const now = new Date();
 const failures = [];
 const warnings = [];
@@ -35,12 +37,27 @@ if (!requestedAuthorizationId) failures.push("authorization_id_required");
 if (!requestedCandidateId) failures.push("candidate_id_required");
 if (!renderDeployHookUrl) failures.push("render_deploy_hook_not_configured");
 if (!productionUrl) failures.push("production_url_not_configured");
+if (!/^[0-9a-f]{40}$/i.test(promotionHeadSha)) failures.push("promotion_head_sha_invalid");
+if (!/^[0-9a-f]{40}$/i.test(currentMainSha)) failures.push("current_main_sha_invalid");
 if (authorization.authorizationId !== requestedAuthorizationId) failures.push("authorization_id_mismatch");
 if (authorization.decision !== "authorized" || authorization.authorized !== true) failures.push("authorization_not_authorized");
+if (authorization.environment !== "production") failures.push(`authorization_environment_invalid:${authorization.environment ?? "missing"}`);
+if (authorization.signature !== "Tehkné Solutions") failures.push("authorization_signature_invalid");
 if (authorization.candidateId !== requestedCandidateId || candidate.candidateId !== requestedCandidateId) failures.push("candidate_id_mismatch");
 if (authorization.candidateSha !== candidate.candidateSha) failures.push("authorization_candidate_sha_mismatch");
+if (authorization.currentMainSha !== candidate.candidateSha) failures.push("authorization_main_sha_mismatch");
+if (promotionHeadSha && promotionHeadSha !== candidate.candidateSha) failures.push(`promotion_snapshot_mismatch:${promotionHeadSha}:${candidate.candidateSha}`);
+if (currentMainSha && currentMainSha !== candidate.candidateSha) failures.push(`candidate_superseded_since_authorization:${candidate.candidateSha}:${currentMainSha}`);
+const provenance = authorization.provenance ?? {};
+if (provenance.authorizationWorkflow !== "deployment-authorization") failures.push("authorization_provenance_workflow_invalid");
+if (provenance.sourceRepository !== process.env.GITHUB_REPOSITORY) failures.push("authorization_provenance_repository_mismatch");
+if (provenance.sourceRef !== "refs/heads/main") failures.push(`authorization_provenance_ref_invalid:${provenance.sourceRef ?? "missing"}`);
+if (provenance.sourceHeadSha !== candidate.candidateSha) failures.push("authorization_provenance_head_sha_mismatch");
+if (!/^\d+$/.test(String(provenance.sourceWorkflowRunId ?? ""))) failures.push("authorization_provenance_run_id_invalid");
+if (authorization.evidence?.activeRecoveryIncidents !== 0) failures.push(`authorization_has_active_recovery_incidents:${authorization.evidence?.activeRecoveryIncidents ?? "missing"}`);
 if (candidate.expiresAt && Date.parse(candidate.expiresAt) <= now.getTime()) failures.push("candidate_expired");
 if (candidate.immutable !== true || candidate.signature !== "Tehkné Solutions") failures.push("candidate_integrity_invalid");
+if (gate?.signals?.recoveryBlocked !== false) failures.push(`release_gate_recovery_state_invalid:${String(gate?.signals?.recoveryBlocked)}`);
 
 const expectedFingerprint = fingerprint([candidate, gate, quality, smoke]);
 if (authorization.evidenceFingerprint !== expectedFingerprint) failures.push("authorization_evidence_fingerprint_mismatch");
@@ -117,6 +134,10 @@ const report = {
   authorizationId: authorization.authorizationId ?? null,
   candidateId: candidate.candidateId ?? null,
   candidateSha: candidate.candidateSha ?? null,
+  authorizedSourceRunId: provenance.sourceWorkflowRunId ?? null,
+  authorizedSourceHeadSha: provenance.sourceHeadSha ?? null,
+  promotionHeadSha: promotionHeadSha || null,
+  currentMainSha: currentMainSha || null,
   evidenceFingerprint: expectedFingerprint,
   status,
   verificationClassification,
@@ -147,6 +168,10 @@ const md = [
   `- Candidate: **${candidate.candidateId ?? "—"}**`,
   `- SHA: \`${candidate.candidateSha ?? "—"}\``,
   `- Authorization: **${authorization.authorizationId ?? "—"}**`,
+  `- Authorization source run: **${provenance.sourceWorkflowRunId ?? "—"}**`,
+  `- Authorization source SHA: \`${provenance.sourceHeadSha ?? "—"}\``,
+  `- Promotion snapshot SHA: \`${promotionHeadSha || "—"}\``,
+  `- Current main SHA: \`${currentMainSha || "—"}\``,
   `- Production: ${productionUrl || "—"}`,
   `- Render hook HTTP: ${renderDeployHttpStatus ?? "—"}`,
   `- Render deploy ID: ${renderDeployId ?? "—"}`,
@@ -183,6 +208,10 @@ if (telemetryBaseUrl) {
       authorizationId: report.authorizationId,
       candidateId: report.candidateId,
       candidateSha: report.candidateSha,
+      authorizedSourceRunId: report.authorizedSourceRunId,
+      authorizedSourceHeadSha: report.authorizedSourceHeadSha,
+      promotionHeadSha: report.promotionHeadSha,
+      currentMainSha: report.currentMainSha,
       productionUrl: report.productionUrl,
       renderDeployHttpStatus,
       renderDeployId,

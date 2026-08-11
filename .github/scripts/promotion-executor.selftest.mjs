@@ -12,14 +12,32 @@ await mkdir(inputDir, { recursive: true });
 
 const sha = "a".repeat(40);
 const wrongSha = "b".repeat(40);
-const candidate = { schemaVersion: 1, candidateId: "rc.test", candidateSha: sha, createdAt: new Date().toISOString(), expiresAt: new Date(Date.now() + 3600000).toISOString(), ttlHours: 1, immutable: true, evidence: { regressionBudget: "pass" }, signature: "Tehkné Solutions" };
-const gate = { eligible: true, decision: "eligible", candidateSha: sha, reasons: [] };
+const candidate = { schemaVersion: 1, candidateId: "rc.test", candidateSha: sha, createdAt: new Date().toISOString(), expiresAt: new Date(Date.now() + 3600000).toISOString(), ttlHours: 1, immutable: true, evidence: { regressionBudget: "pass", activeRecoveryIncidents: 0 }, signature: "Tehkné Solutions" };
+const gate = { eligible: true, decision: "eligible", candidateSha: sha, reasons: [], signals: { recoveryBlocked: false } };
 const quality = { sha, result: "pass", regressionBudget: { status: "pass" } };
 const smoke = { ok: true, smokeSessionId: "smoke.test" };
 const hash = createHash("sha256");
 for (const part of [candidate, gate, quality, smoke]) hash.update(JSON.stringify(part));
 const evidenceFingerprint = `sha256:${hash.digest("hex")}`;
-const authorization = { authorizationId: "deploy-auth.test", authorized: true, decision: "authorized", candidateId: candidate.candidateId, candidateSha: sha, evidenceFingerprint, environment: "production", signature: "Tehkné Solutions" };
+const authorization = {
+  authorizationId: "deploy-auth.test",
+  authorized: true,
+  decision: "authorized",
+  candidateId: candidate.candidateId,
+  candidateSha: sha,
+  currentMainSha: sha,
+  evidenceFingerprint,
+  environment: "production",
+  provenance: {
+    authorizationWorkflow: "deployment-authorization",
+    sourceWorkflowRunId: "123456789",
+    sourceRepository: "Tehkne-Solutions/hnk-cronicas-obra-viva",
+    sourceRef: "refs/heads/main",
+    sourceHeadSha: sha,
+  },
+  evidence: { activeRecoveryIncidents: 0, recoveryGate: "clear" },
+  signature: "Tehkné Solutions",
+};
 for (const [name, value] of [["release-candidate.json", candidate], ["release-gate-report.json", gate], ["ci-quality-report.json", quality], ["release-smoke.json", smoke], ["deployment-authorization.json", authorization]]) {
   await writeFile(join(inputDir, name), `${JSON.stringify(value)}\n`);
 }
@@ -58,7 +76,7 @@ const address = server.address();
 if (!address || typeof address === "string") throw new Error("server address unavailable");
 const base = `http://127.0.0.1:${address.port}`;
 
-async function run({ expectSuccess, nextHookStatus, wrongManifest }) {
+async function run({ expectSuccess, nextHookStatus, wrongManifest, promotionSha = sha, mainSha = sha }) {
   lastRequestedRef = null;
   hookStatus = nextHookStatus;
   forceWrongManifest = wrongManifest;
@@ -74,6 +92,9 @@ async function run({ expectSuccess, nextHookStatus, wrongManifest }) {
         HNK_PROMOTION_INPUT_DIR: inputDir,
         HNK_AUTHORIZATION_ID: authorization.authorizationId,
         HNK_CANDIDATE_ID: candidate.candidateId,
+        HNK_PROMOTION_HEAD_SHA: promotionSha,
+        HNK_CURRENT_MAIN_SHA: mainSha,
+        GITHUB_REPOSITORY: "Tehkne-Solutions/hnk-cronicas-obra-viva",
         HNK_RENDER_DEPLOY_HOOK_URL: `${base}/render-hook?key=test`,
         HNK_GAME_PRODUCTION_URL: base,
         HNK_POST_DEPLOY_TIMEOUT_MS: "1000",
@@ -85,8 +106,9 @@ async function run({ expectSuccess, nextHookStatus, wrongManifest }) {
     child.once("exit", (value) => resolveCode(value ?? 1));
   });
   if ((code === 0) !== expectSuccess) throw new Error(`unexpected executor exit ${code}`);
-  if (lastRequestedRef !== sha) throw new Error(`Render hook did not receive exact ref: ${lastRequestedRef}`);
-  return JSON.parse(await readFile(resolve(repo, "artifacts/promotion-report.json"), "utf8"));
+  const report = JSON.parse(await readFile(resolve(repo, "artifacts/promotion-report.json"), "utf8"));
+  if (expectSuccess && lastRequestedRef !== sha) throw new Error(`Render hook did not receive exact ref: ${lastRequestedRef}`);
+  return report;
 }
 
 try {
@@ -94,13 +116,18 @@ try {
   if (queued.status !== "completed" || queued.provider !== "render" || queued.verifiedManifest?.buildSha !== sha) throw new Error("queued Render promotion was not verified");
   if (queued.renderDeployQueued !== true || queued.renderDeployHttpStatus !== 202 || queued.renderDeployId !== null) throw new Error("queued Render promotion metadata invalid");
   if (queued.verificationTimeoutMs !== 2000 || queued.verificationClassification !== "verified") throw new Error("queued Render promotion did not use extended verification window");
+  if (queued.authorizedSourceHeadSha !== sha || queued.promotionHeadSha !== sha || queued.currentMainSha !== sha) throw new Error("promotion provenance evidence invalid");
+
+  const stale = await run({ expectSuccess: false, nextHookStatus: 200, wrongManifest: false, mainSha: wrongSha });
+  if (!stale.failures.some((item) => item.startsWith("candidate_superseded_since_authorization:"))) throw new Error("stale authorized candidate was not rejected");
+  if (lastRequestedRef !== null) throw new Error("stale candidate reached Render hook");
 
   const failed = await run({ expectSuccess: false, nextHookStatus: 200, wrongManifest: true });
   if (failed.status !== "rollback_required" || !failed.failures.some((item) => item.startsWith("post_deploy_verification_failed:"))) throw new Error("wrong production SHA did not require rollback state");
   if (failed.renderDeployId !== "dep-test-001" || failed.renderDeployQueued !== false || failed.renderDeployHttpStatus !== 200) throw new Error("started Render deployment metadata invalid");
   if (failed.verificationClassification !== "unverified_after_timeout" || failed.rollbackAction !== "not_executed") throw new Error("failed verification classification invalid");
 
-  console.log("promotion executor Render self-test: PASS");
+  console.log("promotion executor Render/provenance self-test: PASS");
 } finally {
   await new Promise((resolveClose) => server.close(resolveClose));
   await rm(temp, { recursive: true, force: true });
