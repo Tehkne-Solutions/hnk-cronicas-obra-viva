@@ -1,6 +1,7 @@
 import { readFile } from "node:fs/promises";
 
 const qualityWorkflow = await readFile(".github/workflows/quality-release-gate.yml", "utf8");
+const previewWorkflow = await readFile(".github/workflows/preview-release-gate.yml", "utf8");
 const releaseGate = await readFile(".github/scripts/release-gate.mjs", "utf8");
 const authorizationWorkflow = await readFile(".github/workflows/deployment-authorization.yml", "utf8");
 const authorizationScript = await readFile(".github/scripts/authorize-deployment.mjs", "utf8");
@@ -10,6 +11,10 @@ const promotionScript = await readFile(".github/scripts/promote-release.mjs", "u
 const required = [
   [qualityWorkflow, "workflows: [foundation, recovery-executor]"],
   [qualityWorkflow, "HNK_RECOVERY_GATE_HOURS: 168"],
+  [previewWorkflow, "workflow_dispatch:"],
+  [previewWorkflow, "workflows: [quality-release-gate]"],
+  [previewWorkflow, "github.event.workflow_run.head_sha"],
+  [previewWorkflow, "github.event.workflow_run.conclusion == 'success'"],
   [releaseGate, "/api/recovery?hours=${recoveryHours}"],
   [releaseGate, "recovery_gate_blocked:"],
   [releaseGate, 'sessionId.startsWith("release.")'],

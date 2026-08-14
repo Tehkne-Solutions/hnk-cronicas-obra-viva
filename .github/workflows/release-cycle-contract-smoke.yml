@@ -12,6 +12,7 @@ on:
       - ".github/scripts/deployment-authorization.selftest.mjs"
       - ".github/scripts/promotion-executor.selftest.mjs"
       - ".github/workflows/quality-release-gate.yml"
+      - ".github/workflows/preview-release-gate.yml"
       - ".github/workflows/deployment-authorization.yml"
       - ".github/workflows/promotion-executor.yml"
       - ".github/workflows/release-cycle-contract-smoke.yml"

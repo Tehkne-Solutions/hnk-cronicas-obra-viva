@@ -7,17 +7,22 @@ on:
         description: "Commit SHA to evaluate (blank = current main)"
         required: false
         type: string
+  workflow_run:
+    workflows: [quality-release-gate]
+    types: [completed]
+    branches: [main]
 
 permissions:
   actions: read
   contents: read
 
 concurrency:
-  group: preview-release-gate-${{ inputs.candidate_sha || github.sha }}
+  group: preview-release-gate-${{ github.event.workflow_run.head_sha || inputs.candidate_sha || github.sha }}
   cancel-in-progress: true
 
 jobs:
   evaluate:
+    if: ${{ github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success' }}
     runs-on: ubuntu-latest
     env:
       GH_TOKEN: ${{ github.token }}
@@ -31,7 +36,8 @@ jobs:
         id: candidate
         shell: bash
         run: |
-          sha="${{ inputs.candidate_sha }}"
+          sha="${{ github.event.workflow_run.head_sha }}"
+          if [ -z "$sha" ]; then sha="${{ inputs.candidate_sha }}"; fi
           if [ -z "$sha" ]; then
             sha=$(gh api "/repos/$GITHUB_REPOSITORY/commits/main" --jq '.sha')
           fi
