@@ -1,0 +1,29 @@
+{
+  "schemaVersion": 1,
+  "packId": "PACK-00",
+  "name": "HENUVOKODAN ART FOUNDATION",
+  "version": "1.0.0-candidate",
+  "status": "candidate-applied",
+  "signature": "Tehkné Solutions",
+  "sourcePack": "HENUVOKODAN_PACK00_ART_FOUNDATION_v1.0.0_CANDIDATE",
+  "runtimeAssets": [
+    "/pack00/characters/mentor-neutral.webp",
+    "/pack00/characters/spark-curious.webp",
+    "/pack00/elements/fire-icon.svg",
+    "/pack00/elements/fire-sigil.svg",
+    "/pack00/elements/water-icon.svg",
+    "/pack00/elements/water-sigil.svg",
+    "/pack00/ui/alchemy-slot.svg",
+    "/pack00/ui/dialogue-frame.svg",
+    "/pack00/ornaments/corner.svg",
+    "/pack00/ornaments/separator.svg",
+    "/pack00/ornaments/seal.svg",
+    "/pack00/ornaments/frame-motif.svg"
+  ],
+  "pending": [{
+    "assetId": "FND-08",
+    "name": "Laboratory Crop",
+    "reason": "GitHub connector binary safety scanner rejected the WebP payload; no substitute artwork is used."
+  }],
+  "policy": { "gradients": false, "glow": false, "appLikeUi": false, "masterClaim": false }
+}
